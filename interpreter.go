@@ -1,4 +1,4 @@
-package tk
+package gotk
 
 /*
 #cgo LDFLAGS: -ltcl8.5 -ltk8.5

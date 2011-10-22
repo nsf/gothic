@@ -1,10 +1,10 @@
 package main
 
 import "fmt"
-import "tk"
+import "github.com/nsf/gotk"
 
 func main() {
-	ir, err := tk.NewInterpreter()
+	ir, err := gotk.NewInterpreter()
 	if err != nil {
 		panic(err)
 	}
