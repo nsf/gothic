@@ -69,6 +69,10 @@ const (
 	debug = true
 )
 
+//------------------------------------------------------------------------------
+// StringVar
+//------------------------------------------------------------------------------
+
 type StringVar struct {
 	data *C.char
 	ir *Interpreter
@@ -95,6 +99,62 @@ func (sv *StringVar) Set(s string) {
 	C.Tcl_UpdateLinkedVar(sv.ir.C, cname)
 	C.free_string(cname)
 }
+
+func (ir *Interpreter) NewStringVar(name string) *StringVar {
+	sv := new(StringVar)
+	sv.ir = ir
+	sv.name = name
+	sv.data = C.Tcl_Alloc(1)
+	(*((*[999999]byte)(unsafe.Pointer(sv.data))))[0] = 0
+
+	cname := C.CString(name)
+	status := C.Tcl_LinkVar(ir.C, cname, (*C.char)(unsafe.Pointer(&sv.data)), C.TCL_LINK_STRING)
+	if status != C.TCL_OK {
+		panic(C.GoString(ir.C.result))
+	}
+	C.free_string(cname)
+	return sv
+}
+
+//------------------------------------------------------------------------------
+// FloatVar
+//------------------------------------------------------------------------------
+
+type FloatVar struct {
+	data C.double
+	ir *Interpreter
+	name string
+}
+
+func (fv *FloatVar) Get() float64 {
+	return float64(fv.data)
+}
+
+func (fv *FloatVar) Set(f float64) {
+	fv.data = C.double(f)
+	cname := C.CString(fv.name)
+	C.Tcl_UpdateLinkedVar(fv.ir.C, cname)
+	C.free_string(cname)
+}
+
+func (ir *Interpreter) NewFloatVar(name string) *FloatVar {
+	fv := new(FloatVar)
+	fv.ir = ir
+	fv.name = name
+	fv.data = 0.0
+
+	cname := C.CString(name)
+	status := C.Tcl_LinkVar(ir.C, cname, (*C.char)(unsafe.Pointer(&fv.data)), C.TCL_LINK_DOUBLE)
+	if status != C.TCL_OK {
+		panic(C.GoString(ir.C.result))
+	}
+	C.free_string(cname)
+	return fv
+}
+
+//------------------------------------------------------------------------------
+// Interpreter
+//------------------------------------------------------------------------------
 
 type Interpreter struct {
 	C *C.Tcl_Interp
@@ -261,22 +321,6 @@ func (ir *Interpreter) RegisterCallback(name string, cbfunc interface{}) {
 	cname := C.CString(name)
 	C._gotk_c_add_callback(ir.C, cname, unsafe.Pointer(ir), C.int(id))
 	C.free_string(cname)
-}
-
-func (ir *Interpreter) NewStringVar(name string) *StringVar {
-	sv := new(StringVar)
-	sv.ir = ir
-	sv.name = name
-	sv.data = C.Tcl_Alloc(1)
-	(*((*[999999]byte)(unsafe.Pointer(sv.data))))[0] = 0
-
-	cname := C.CString(name)
-	status := C.Tcl_LinkVar(ir.C, cname, (*C.char)(unsafe.Pointer(&sv.data)), C.TCL_LINK_STRING)
-	if status != C.TCL_OK {
-		panic(C.GoString(ir.C.result))
-	}
-	C.free_string(cname)
-	return sv
 }
 
 func (ir *Interpreter) MainLoop() {
