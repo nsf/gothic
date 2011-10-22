@@ -1,6 +1,8 @@
 package tk
 
 /*
+#cgo LDFLAGS: -ltcl8.5 -ltk8.5
+
 #include <stdlib.h>
 #include <tcl.h>
 #include <tk.h>
