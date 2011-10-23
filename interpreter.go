@@ -50,6 +50,27 @@ static void _gotk_c_tcl_set_result(Tcl_Interp *interp, char *result)
 {
 	Tcl_SetResult(interp, result, free_string);
 }
+
+//------------------------------------------------------------------------------
+// Go channels integration, two commands: gosend, gorecv
+//------------------------------------------------------------------------------
+
+extern int _gotk_go_gosend_handler(void*, int, Tcl_Obj**);
+
+static int _gotk_c_gosend_handler(ClientData cd, Tcl_Interp *interp,
+				   int objc, Tcl_Obj *CONST objv[])
+{
+	return _gotk_go_gosend_handler((void*)cd, objc, (Tcl_Obj**)objv);
+}
+
+static void _gotk_c_add_gosend_command(Tcl_Interp *interp, void *go_interp)
+{
+	Tcl_CreateObjCommand(interp, "gosend", _gotk_c_gosend_handler,
+			     (ClientData)go_interp, 0);
+}
+
+// gorecv is not implemented yet, do we need really it?
+
 */
 import "C"
 import (
@@ -212,12 +233,89 @@ type Interpreter struct {
 	// registered callbacks
 	callbacks map[string]interface{}
 
+	// registered channels
+	channels map[string]interface{}
+
 	// just a buffer to avoid allocs in _gotk_go_callback_handler
 	valuesbuf []reflect.Value
 
 	// another buffer for Eval command construction
 	cmdbuf bytes.Buffer
 }
+
+func NewInterpreter() (*Interpreter, os.Error) {
+	ir := &Interpreter{
+		C:         C.Tcl_CreateInterp(),
+		callbacks: make(map[string]interface{}),
+		channels:  make(map[string]interface{}),
+		valuesbuf: make([]reflect.Value, 0, 10),
+	}
+
+	status := C.Tcl_Init(ir.C)
+	if status != C.TCL_OK {
+		return nil, os.NewError(C.GoString(ir.C.result))
+	}
+
+	status = C.Tk_Init(ir.C)
+	if status != C.TCL_OK {
+		return nil, os.NewError(C.GoString(ir.C.result))
+	}
+
+	C._gotk_c_add_gosend_command(ir.C, unsafe.Pointer(ir))
+
+	return ir, nil
+}
+
+func (ir *Interpreter) Eval(args ...string) os.Error {
+	for _, arg := range args {
+		ir.cmdbuf.WriteString(arg)
+		ir.cmdbuf.WriteString(" ")
+	}
+
+	s := ir.cmdbuf.String()
+	ir.cmdbuf.Reset()
+
+	if debug {
+		println(s)
+	}
+
+	cs := C.CString(s)
+	status := C.Tcl_Eval(ir.C, cs)
+	C.free_string(cs)
+	if status != C.TCL_OK {
+		return os.NewError(C.GoString(ir.C.result))
+	}
+	return nil
+}
+
+func (ir *Interpreter) MainLoop() {
+	C.Tk_MainLoop()
+}
+
+func (ir *Interpreter) tclObjToGoValue(obj *C.Tcl_Obj, typ reflect.Type) reflect.Value {
+	v := reflect.New(typ).Elem()
+	switch typ.Kind() {
+	case reflect.Int:
+		var out C.Tcl_WideInt
+		status := C.Tcl_GetWideIntFromObj(ir.C, obj, &out)
+		if status == C.TCL_OK {
+			v.SetInt(int64(out))
+		}
+	case reflect.String:
+		v.SetString(C.GoString(C.Tcl_GetString(obj)))
+	case reflect.Float32, reflect.Float64:
+		var out C.double
+		status := C.Tcl_GetDoubleFromObj(ir.C, obj, &out)
+		if status == C.TCL_OK {
+			v.SetFloat(float64(out))
+		}
+	}
+	return v
+}
+
+//------------------------------------------------------------------------------
+// Interpreter.Callbacks
+//------------------------------------------------------------------------------
 
 //export _gotk_go_callback_handler
 func _gotk_go_callback_handler(clidataup unsafe.Pointer, objc int, objv unsafe.Pointer) int {
@@ -306,48 +404,6 @@ func _gotk_go_callback_deleter(data unsafe.Pointer) {
 	ir.callbacks[_CGoStringToGoString(clidata.p, clidata.n)] = nil, false
 }
 
-func NewInterpreter() (*Interpreter, os.Error) {
-	ir := &Interpreter{
-		C:         C.Tcl_CreateInterp(),
-		callbacks: make(map[string]interface{}),
-		valuesbuf: make([]reflect.Value, 0, 10),
-	}
-
-	status := C.Tcl_Init(ir.C)
-	if status != C.TCL_OK {
-		return nil, os.NewError(C.GoString(ir.C.result))
-	}
-
-	status = C.Tk_Init(ir.C)
-	if status != C.TCL_OK {
-		return nil, os.NewError(C.GoString(ir.C.result))
-	}
-
-	return ir, nil
-}
-
-func (ir *Interpreter) Eval(args ...string) os.Error {
-	for _, arg := range args {
-		ir.cmdbuf.WriteString(arg)
-		ir.cmdbuf.WriteString(" ")
-	}
-
-	s := ir.cmdbuf.String()
-	ir.cmdbuf.Reset()
-
-	if debug {
-		println(s)
-	}
-
-	cs := C.CString(s)
-	status := C.Tcl_Eval(ir.C, cs)
-	C.free_string(cs)
-	if status != C.TCL_OK {
-		return os.NewError(C.GoString(ir.C.result))
-	}
-	return nil
-}
-
 func (ir *Interpreter) RegisterCallback(name string, cbfunc interface{}) {
 	ir.callbacks[name] = cbfunc
 	cp, cn := _GoStringToCGoString(name)
@@ -368,6 +424,40 @@ func (ir *Interpreter) UnregisterCallback(name string) {
 	}
 }
 
-func (ir *Interpreter) MainLoop() {
-	C.Tk_MainLoop()
+//------------------------------------------------------------------------------
+// Interpreter.Channels
+//------------------------------------------------------------------------------
+
+//export _gotk_go_gosend_handler
+func _gotk_go_gosend_handler(irup unsafe.Pointer, objc int, objv unsafe.Pointer) int {
+	ir := (*Interpreter)(irup)
+	args := (*(*[alot]*C.Tcl_Obj)(objv))[1:objc]
+	if len(args) != 2 {
+		msg := C.CString("gosend: argument count mismatch, expected: <CHANNAME> <VALUE>")
+		C._gotk_c_tcl_set_result(ir.C, msg)
+		return C.TCL_ERROR
+	}
+
+	name := C.GoString(C.Tcl_GetString(args[0]))
+
+	var ch interface{}
+	var ok bool
+	if ch, ok = ir.channels[name]; !ok {
+		msg := C.CString("gosend: trying to send to a non-existent channel")
+		C._gotk_c_tcl_set_result(ir.C, msg)
+		return C.TCL_ERROR
+	}
+
+	val := reflect.ValueOf(ch)
+	arg := ir.tclObjToGoValue(args[1], val.Type().Elem())
+	val.Send(arg)
+	return C.TCL_OK
+}
+
+func (ir *Interpreter) RegisterChannel(name string, ch interface{}) {
+	ir.channels[name] = ch
+}
+
+func (ir *Interpreter) UnregisterChannel(name string) {
+	ir.channels[name] = nil, false
 }

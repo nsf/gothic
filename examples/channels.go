@@ -1,0 +1,34 @@
+package main
+
+import "fmt"
+import "github.com/nsf/gotk"
+
+func dispatcher(c <-chan string) {
+	for v := range c {
+		switch v {
+		case "button1":
+			fmt.Println("Button 1!")
+		case "button2":
+			fmt.Println("Button 2!")
+		case "button3":
+			fmt.Println("Button 3!")
+		}
+	}
+}
+
+func main() {
+	ir, err := gotk.NewInterpreter()
+	if err != nil {
+		panic(err)
+	}
+
+	c := make(chan string)
+	go dispatcher(c)
+
+	ir.RegisterChannel("dispatcher", c)
+	ir.Eval(`ttk::button .b1 -text "Button 1" -command {gosend dispatcher button1}`)
+	ir.Eval(`ttk::button .b2 -text "Button 2" -command {gosend dispatcher button2}`)
+	ir.Eval(`ttk::button .b3 -text "Button 3" -command {gosend dispatcher button3}`)
+	ir.Eval(`pack .b1 .b2 .b3`)
+	ir.MainLoop()
+}

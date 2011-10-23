@@ -11,7 +11,7 @@ func main() {
 
 	entryText := ir.NewStringVar("entryText")
 	ir.RegisterCallback("updateLabel", func() {
-		ir.Eval(`.label configure -text [subst -nocommands -novariables {` + entryText.Get() + `}]`)
+		ir.Eval(`.label configure -text {` + entryText.Get() + `}`)
 		entryText.Set("")
 	})
 
