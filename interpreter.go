@@ -13,13 +13,22 @@ typedef struct {
 	int n;   // go string len
 } GoTkClientData;
 
-extern int _gotk_go_callback_handler(GoTkClientData*, int, Tcl_Obj**);
-extern void _gotk_go_callback_deleter(GoTkClientData*);
-
 static inline void free_string(char *s)
 {
 	free(s);
 }
+
+static inline void _gotk_c_tcl_set_result(Tcl_Interp *interp, char *result)
+{
+	Tcl_SetResult(interp, result, free_string);
+}
+
+//------------------------------------------------------------------------------
+// Callbacks
+//------------------------------------------------------------------------------
+
+extern int _gotk_go_callback_handler(GoTkClientData*, int, Tcl_Obj**);
+extern void _gotk_go_callback_deleter(GoTkClientData*);
 
 static int _gotk_c_callback_handler(ClientData cd, Tcl_Interp *interp,
 				    int objc, Tcl_Obj *CONST objv[])
@@ -46,30 +55,37 @@ static void _gotk_c_add_callback(Tcl_Interp *interp, const char *name,
 			     (ClientData)cd, _gotk_c_callback_deleter);
 }
 
-static void _gotk_c_tcl_set_result(Tcl_Interp *interp, char *result)
-{
-	Tcl_SetResult(interp, result, free_string);
-}
-
 //------------------------------------------------------------------------------
-// Go channels integration, two commands: gosend, gorecv
+// Channels
 //------------------------------------------------------------------------------
 
-extern int _gotk_go_gosend_handler(void*, int, Tcl_Obj**);
+extern int _gotk_go_channel_handler(GoTkClientData*, int, Tcl_Obj**);
+extern void _gotk_go_channel_deleter(GoTkClientData*);
 
-static int _gotk_c_gosend_handler(ClientData cd, Tcl_Interp *interp,
+static int _gotk_c_channel_handler(ClientData cd, Tcl_Interp *interp,
 				   int objc, Tcl_Obj *CONST objv[])
 {
-	return _gotk_go_gosend_handler((void*)cd, objc, (Tcl_Obj**)objv);
+	return _gotk_go_channel_handler((GoTkClientData*)cd, objc, (Tcl_Obj**)objv);
 }
 
-static void _gotk_c_add_gosend_command(Tcl_Interp *interp, void *go_interp)
+static void _gotk_c_channel_deleter(ClientData cd)
 {
-	Tcl_CreateObjCommand(interp, "gosend", _gotk_c_gosend_handler,
-			     (ClientData)go_interp, 0);
+	GoTkClientData *clidata = (GoTkClientData*)cd;
+	_gotk_go_channel_deleter(clidata);
+	free(cd);
 }
 
-// gorecv is not implemented yet, do we need really it?
+static void _gotk_c_add_channel(Tcl_Interp *interp, const char *name,
+				void *go_interp, char *p, int n)
+{
+	GoTkClientData *cd = malloc(sizeof(GoTkClientData));
+	cd->go_interp = go_interp;
+	cd->p = p;
+	cd->n = n;
+
+	Tcl_CreateObjCommand(interp, name, _gotk_c_channel_handler,
+			     (ClientData)cd, _gotk_c_channel_deleter);
+}
 
 */
 import "C"
@@ -261,8 +277,6 @@ func NewInterpreter() (*Interpreter, os.Error) {
 		return nil, os.NewError(C.GoString(ir.C.result))
 	}
 
-	C._gotk_c_add_gosend_command(ir.C, unsafe.Pointer(ir))
-
 	return ir, nil
 }
 
@@ -428,17 +442,18 @@ func (ir *Interpreter) UnregisterCallback(name string) {
 // Interpreter.Channels
 //------------------------------------------------------------------------------
 
-//export _gotk_go_gosend_handler
-func _gotk_go_gosend_handler(irup unsafe.Pointer, objc int, objv unsafe.Pointer) int {
-	ir := (*Interpreter)(irup)
+//export _gotk_go_channel_handler
+func _gotk_go_channel_handler(clidataup unsafe.Pointer, objc int, objv unsafe.Pointer) int {
+	clidata := (*C.GoTkClientData)(clidataup)
+	ir := (*Interpreter)(clidata.go_interp)
 	args := (*(*[alot]*C.Tcl_Obj)(objv))[1:objc]
 	if len(args) != 2 {
-		msg := C.CString("gosend: argument count mismatch, expected: <CHANNAME> <VALUE>")
+		msg := C.CString("gosend: argument count mismatch, expected two: <- VALUE")
 		C._gotk_c_tcl_set_result(ir.C, msg)
 		return C.TCL_ERROR
 	}
 
-	name := C.GoString(C.Tcl_GetString(args[0]))
+	name := _CGoStringToGoString(clidata.p, clidata.n)
 
 	var ch interface{}
 	var ok bool
@@ -454,10 +469,29 @@ func _gotk_go_gosend_handler(irup unsafe.Pointer, objc int, objv unsafe.Pointer)
 	return C.TCL_OK
 }
 
+//export _gotk_go_channel_deleter
+func _gotk_go_channel_deleter(data unsafe.Pointer) {
+	clidata := (*C.GoTkClientData)(data)
+	ir := (*Interpreter)(clidata.go_interp)
+	ir.channels[_CGoStringToGoString(clidata.p, clidata.n)] = nil, false
+}
+
 func (ir *Interpreter) RegisterChannel(name string, ch interface{}) {
 	ir.channels[name] = ch
+	cp, cn := _GoStringToCGoString(name)
+	cname := C.CString(name)
+	C._gotk_c_add_channel(ir.C, cname, unsafe.Pointer(ir), cp, cn)
+	C.free_string(cname)
 }
 
 func (ir *Interpreter) UnregisterChannel(name string) {
-	ir.channels[name] = nil, false
+	if _, ok := ir.channels[name]; !ok {
+		return
+	}
+	cname := C.CString(name)
+	status := C.Tcl_DeleteCommand(ir.C, cname)
+	C.free_string(cname)
+	if status != C.TCL_OK {
+		panic(C.GoString(ir.C.result))
+	}
 }

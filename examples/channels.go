@@ -26,9 +26,9 @@ func main() {
 	go dispatcher(c)
 
 	ir.RegisterChannel("dispatcher", c)
-	ir.Eval(`ttk::button .b1 -text "Button 1" -command {gosend dispatcher button1}`)
-	ir.Eval(`ttk::button .b2 -text "Button 2" -command {gosend dispatcher button2}`)
-	ir.Eval(`ttk::button .b3 -text "Button 3" -command {gosend dispatcher button3}`)
+	ir.Eval(`ttk::button .b1 -text "Button 1" -command {dispatcher <- button1}`)
+	ir.Eval(`ttk::button .b2 -text "Button 2" -command {dispatcher <- button2}`)
+	ir.Eval(`ttk::button .b3 -text "Button 3" -command {dispatcher <- button3}`)
 	ir.Eval(`pack .b1 .b2 .b3`)
 	ir.MainLoop()
 }
