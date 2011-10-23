@@ -9,16 +9,11 @@ package gotk
 
 typedef struct {
 	void *go_interp;
-	int slot;
+	char *p; // go string ptr
+	int n;   // go string len
 } GoTkClientData;
 
-typedef struct {
-	GoTkClientData *clidata;
-	int objc;
-	Tcl_Obj **objv;
-} GoTkCallbackData;
-
-extern int _gotk_go_callback_handler(GoTkCallbackData*);
+extern int _gotk_go_callback_handler(GoTkClientData*, int, Tcl_Obj**);
 extern void _gotk_go_callback_deleter(GoTkClientData*);
 
 static inline void free_string(char *s)
@@ -29,23 +24,23 @@ static inline void free_string(char *s)
 static int _gotk_c_callback_handler(ClientData cd, Tcl_Interp *interp,
 				    int objc, Tcl_Obj *CONST objv[])
 {
-	GoTkCallbackData data = {(GoTkClientData*)cd, objc, (Tcl_Obj**)objv};
-	return _gotk_go_callback_handler(&data);
+	return _gotk_go_callback_handler((GoTkClientData*)cd, objc, (Tcl_Obj**)objv);
 }
 
 static void _gotk_c_callback_deleter(ClientData cd)
 {
 	GoTkClientData *clidata = (GoTkClientData*)cd;
 	_gotk_go_callback_deleter(clidata);
-	free(clidata);
+	free(cd);
 }
 
 static void _gotk_c_add_callback(Tcl_Interp *interp, const char *name,
-				 void *go_interp, int slot)
+				 void *go_interp, char *p, int n)
 {
 	GoTkClientData *cd = malloc(sizeof(GoTkClientData));
 	cd->go_interp = go_interp;
-	cd->slot = slot;
+	cd->p = p;
+	cd->n = n;
 
 	Tcl_CreateObjCommand(interp, name, _gotk_c_callback_handler,
 			     (ClientData)cd, _gotk_c_callback_deleter);
@@ -65,9 +60,25 @@ import (
 )
 
 const (
-	callbackPrefix = "GoTk::callback_"
 	debug = true
+	alot  = 999999
 )
+
+//------------------------------------------------------------------------------
+// Utils
+//------------------------------------------------------------------------------
+
+func _CGoStringToGoString(p *C.char, n C.int) string {
+	var x reflect.StringHeader
+	x.Data = uintptr(unsafe.Pointer(p))
+	x.Len = int(n)
+	return *(*string)(unsafe.Pointer(&x))
+}
+
+func _GoStringToCGoString(s string) (*C.char, C.int) {
+	x := *(*reflect.StringHeader)(unsafe.Pointer(&s))
+	return (*C.char)(unsafe.Pointer(x.Data)), C.int(x.Len)
+}
 
 //------------------------------------------------------------------------------
 // StringVar
@@ -75,7 +86,7 @@ const (
 
 type StringVar struct {
 	data *C.char
-	ir *Interpreter
+	ir   *Interpreter
 	name string
 }
 
@@ -91,7 +102,7 @@ func (sv *StringVar) Set(s string) {
 		C.Tcl_Free(sv.data)
 	}
 	sv.data = C.Tcl_Alloc(C.uint(len(s) + 1))
-	svslice := (*((*[999999]byte)(unsafe.Pointer(sv.data))))[:]
+	svslice := (*((*[alot]byte)(unsafe.Pointer(sv.data))))[:]
 	copy(svslice, s)
 	svslice[len(s)] = 0
 
@@ -105,14 +116,15 @@ func (ir *Interpreter) NewStringVar(name string) *StringVar {
 	sv.ir = ir
 	sv.name = name
 	sv.data = C.Tcl_Alloc(1)
-	(*((*[999999]byte)(unsafe.Pointer(sv.data))))[0] = 0
+	(*((*[alot]byte)(unsafe.Pointer(sv.data))))[0] = 0
 
 	cname := C.CString(name)
-	status := C.Tcl_LinkVar(ir.C, cname, (*C.char)(unsafe.Pointer(&sv.data)), C.TCL_LINK_STRING)
+	status := C.Tcl_LinkVar(ir.C, cname, (*C.char)(unsafe.Pointer(&sv.data)),
+		C.TCL_LINK_STRING)
+	C.free_string(cname)
 	if status != C.TCL_OK {
 		panic(C.GoString(ir.C.result))
 	}
-	C.free_string(cname)
 	return sv
 }
 
@@ -122,7 +134,7 @@ func (ir *Interpreter) NewStringVar(name string) *StringVar {
 
 type FloatVar struct {
 	data C.double
-	ir *Interpreter
+	ir   *Interpreter
 	name string
 }
 
@@ -144,12 +156,50 @@ func (ir *Interpreter) NewFloatVar(name string) *FloatVar {
 	fv.data = 0.0
 
 	cname := C.CString(name)
-	status := C.Tcl_LinkVar(ir.C, cname, (*C.char)(unsafe.Pointer(&fv.data)), C.TCL_LINK_DOUBLE)
+	status := C.Tcl_LinkVar(ir.C, cname, (*C.char)(unsafe.Pointer(&fv.data)),
+		C.TCL_LINK_DOUBLE)
+	C.free_string(cname)
 	if status != C.TCL_OK {
 		panic(C.GoString(ir.C.result))
 	}
-	C.free_string(cname)
 	return fv
+}
+
+//------------------------------------------------------------------------------
+// IntVar
+//------------------------------------------------------------------------------
+
+type IntVar struct {
+	data C.Tcl_WideInt
+	ir   *Interpreter
+	name string
+}
+
+func (iv *IntVar) Get() int {
+	return int(iv.data)
+}
+
+func (iv *IntVar) Set(i int) {
+	iv.data = C.Tcl_WideInt(i)
+	cname := C.CString(iv.name)
+	C.Tcl_UpdateLinkedVar(iv.ir.C, cname)
+	C.free_string(cname)
+}
+
+func (ir *Interpreter) NewIntVar(name string) *IntVar {
+	iv := new(IntVar)
+	iv.ir = ir
+	iv.name = name
+	iv.data = 0
+
+	cname := C.CString(name)
+	status := C.Tcl_LinkVar(ir.C, cname, (*C.char)(unsafe.Pointer(&iv.data)),
+		C.TCL_LINK_WIDE_INT)
+	C.free_string(cname)
+	if status != C.TCL_OK {
+		panic(C.GoString(ir.C.result))
+	}
+	return iv
 }
 
 //------------------------------------------------------------------------------
@@ -159,9 +209,8 @@ func (ir *Interpreter) NewFloatVar(name string) *FloatVar {
 type Interpreter struct {
 	C *C.Tcl_Interp
 
-	// registered callbacks and the callback ID generator
-	callbacks map[int]interface{}
-	callbacksId int
+	// registered callbacks
+	callbacks map[string]interface{}
 
 	// just a buffer to avoid allocs in _gotk_go_callback_handler
 	valuesbuf []reflect.Value
@@ -171,13 +220,12 @@ type Interpreter struct {
 }
 
 //export _gotk_go_callback_handler
-func _gotk_go_callback_handler(data unsafe.Pointer) int {
-	cbdata := (*C.GoTkCallbackData)(data)
-	clidata := cbdata.clidata
+func _gotk_go_callback_handler(clidataup unsafe.Pointer, objc int, objv unsafe.Pointer) int {
+	clidata := (*C.GoTkClientData)(clidataup)
 	ir := (*Interpreter)(clidata.go_interp)
-	args := (*(*[9999]*C.Tcl_Obj)(unsafe.Pointer(cbdata.objv)))[1:cbdata.objc]
+	args := (*(*[alot]*C.Tcl_Obj)(objv))[1:objc]
 
-	cb, ok := ir.callbacks[int(clidata.slot)]
+	cb, ok := ir.callbacks[_CGoStringToGoString(clidata.p, clidata.n)]
 	if !ok {
 		msg := C.CString("Trying to invoke a non-existent callback")
 		C._gotk_c_tcl_set_result(ir.C, msg)
@@ -191,7 +239,7 @@ func _gotk_go_callback_handler(data unsafe.Pointer) int {
 		return C.TCL_ERROR
 	}
 
-	defer ir.resetValuesBuf()
+	ir.valuesbuf = ir.valuesbuf[:0]
 
 	ft := f.Type()
 	for i, n := 0, ft.NumIn(); i < n; i++ {
@@ -255,13 +303,13 @@ func _gotk_go_callback_handler(data unsafe.Pointer) int {
 func _gotk_go_callback_deleter(data unsafe.Pointer) {
 	clidata := (*C.GoTkClientData)(data)
 	ir := (*Interpreter)(clidata.go_interp)
-	ir.callbacks[int(clidata.slot)] = nil, false
+	ir.callbacks[_CGoStringToGoString(clidata.p, clidata.n)] = nil, false
 }
 
 func NewInterpreter() (*Interpreter, os.Error) {
 	ir := &Interpreter{
-		C: C.Tcl_CreateInterp(),
-		callbacks: make(map[int]interface{}),
+		C:         C.Tcl_CreateInterp(),
+		callbacks: make(map[string]interface{}),
 		valuesbuf: make([]reflect.Value, 0, 10),
 	}
 
@@ -275,21 +323,7 @@ func NewInterpreter() (*Interpreter, os.Error) {
 		return nil, os.NewError(C.GoString(ir.C.result))
 	}
 
-	err := ir.Eval("namespace eval GoTk {}")
-	if err != nil {
-		return nil, err
-	}
 	return ir, nil
-}
-
-func (ir *Interpreter) resetValuesBuf() {
-	ir.valuesbuf = ir.valuesbuf[:0]
-}
-
-func (ir *Interpreter) nextCallbackId() int {
-	ret := ir.callbacksId
-	ir.callbacksId++
-	return ret
 }
 
 func (ir *Interpreter) Eval(args ...string) os.Error {
@@ -315,12 +349,23 @@ func (ir *Interpreter) Eval(args ...string) os.Error {
 }
 
 func (ir *Interpreter) RegisterCallback(name string, cbfunc interface{}) {
-	id := ir.nextCallbackId()
-	ir.callbacks[id] = cbfunc
-
+	ir.callbacks[name] = cbfunc
+	cp, cn := _GoStringToCGoString(name)
 	cname := C.CString(name)
-	C._gotk_c_add_callback(ir.C, cname, unsafe.Pointer(ir), C.int(id))
+	C._gotk_c_add_callback(ir.C, cname, unsafe.Pointer(ir), cp, cn)
 	C.free_string(cname)
+}
+
+func (ir *Interpreter) UnregisterCallback(name string) {
+	if _, ok := ir.callbacks[name]; !ok {
+		return
+	}
+	cname := C.CString(name)
+	status := C.Tcl_DeleteCommand(ir.C, cname)
+	C.free_string(cname)
+	if status != C.TCL_OK {
+		panic(C.GoString(ir.C.result))
+	}
 }
 
 func (ir *Interpreter) MainLoop() {
