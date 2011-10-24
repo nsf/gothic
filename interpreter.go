@@ -87,6 +87,26 @@ static void _gotk_c_add_channel(Tcl_Interp *interp, const char *name,
 			     (ClientData)cd, _gotk_c_channel_deleter);
 }
 
+//------------------------------------------------------------------------------
+// Async Eval
+//------------------------------------------------------------------------------
+
+typedef struct {
+	Tcl_Event header;
+	void *go_interp;
+} GoTkAsyncEvalEvent;
+
+extern int _gotk_go_asynceval_handler(Tcl_Event*, int);
+
+static Tcl_Event *_gotk_c_new_async_eval_event(void *go_interp)
+{
+	GoTkAsyncEvalEvent *ev = (GoTkAsyncEvalEvent*)Tcl_Alloc(sizeof(GoTkAsyncEvalEvent));
+	ev->header.proc = _gotk_go_asynceval_handler;
+	ev->header.nextPtr = 0;
+	ev->go_interp = go_interp;
+	return (Tcl_Event*)ev;
+}
+
 */
 import "C"
 import (
@@ -258,6 +278,9 @@ type Interpreter struct {
 
 	// another buffer for Eval command construction
 	cmdbuf bytes.Buffer
+
+	thread C.Tcl_ThreadId
+	queue chan string
 }
 
 func NewInterpreter() (*Interpreter, os.Error) {
@@ -266,6 +289,7 @@ func NewInterpreter() (*Interpreter, os.Error) {
 		callbacks: make(map[string]interface{}),
 		channels:  make(map[string]interface{}),
 		valuesbuf: make([]reflect.Value, 0, 10),
+		queue:     make(chan string, 50),
 	}
 
 	status := C.Tcl_Init(ir.C)
@@ -303,6 +327,7 @@ func (ir *Interpreter) Eval(args ...string) {
 }
 
 func (ir *Interpreter) MainLoop() {
+	ir.thread = C.Tcl_GetCurrentThread()
 	C.Tk_MainLoop()
 }
 
@@ -494,4 +519,30 @@ func (ir *Interpreter) UnregisterChannel(name string) {
 	if status != C.TCL_OK {
 		panic(C.GoString(ir.C.result))
 	}
+}
+
+//------------------------------------------------------------------------------
+// Interpreter.AsyncEval
+//------------------------------------------------------------------------------
+
+func (ir *Interpreter) AsyncEval(args ...string) {
+	var buf bytes.Buffer
+	for _, arg := range args {
+		buf.WriteString(arg)
+		buf.WriteString(" ")
+	}
+
+	ir.queue <- buf.String()
+	ev := C._gotk_c_new_async_eval_event(unsafe.Pointer(ir))
+	C.Tcl_ThreadQueueEvent(ir.thread, ev, C.TCL_QUEUE_TAIL)
+	C.Tcl_ThreadAlert(ir.thread)
+}
+
+
+//export _gotk_go_asynceval_handler
+func _gotk_go_asynceval_handler(ev unsafe.Pointer, flags int) int {
+	event := (*C.GoTkAsyncEvalEvent)(ev)
+	ir := (*Interpreter)(event.go_interp)
+	ir.Eval(<-ir.queue)
+	return 1
 }
