@@ -331,12 +331,14 @@ func (ir *Interpreter) MainLoop() {
 	C.Tk_MainLoop()
 }
 
-func (ir *Interpreter) tclObjToGoValue(obj *C.Tcl_Obj, typ reflect.Type) reflect.Value {
+func (ir *Interpreter) tclObjToGoValue(obj *C.Tcl_Obj, typ reflect.Type) (reflect.Value, C.int) {
+	var status C.int
 	v := reflect.New(typ).Elem()
+
 	switch typ.Kind() {
 	case reflect.Int:
 		var out C.Tcl_WideInt
-		status := C.Tcl_GetWideIntFromObj(ir.C, obj, &out)
+		status = C.Tcl_GetWideIntFromObj(ir.C, obj, &out)
 		if status == C.TCL_OK {
 			v.SetInt(int64(out))
 		}
@@ -344,12 +346,16 @@ func (ir *Interpreter) tclObjToGoValue(obj *C.Tcl_Obj, typ reflect.Type) reflect
 		v.SetString(C.GoString(C.Tcl_GetString(obj)))
 	case reflect.Float32, reflect.Float64:
 		var out C.double
-		status := C.Tcl_GetDoubleFromObj(ir.C, obj, &out)
+		status = C.Tcl_GetDoubleFromObj(ir.C, obj, &out)
 		if status == C.TCL_OK {
 			v.SetFloat(float64(out))
 		}
+	default:
+		msg := C.CString(fmt.Sprintf("Cannot convert Tcl object to Go type: %s", typ))
+		C._gotk_c_tcl_set_result(ir.C, msg)
+		status = C.TCL_ERROR
 	}
-	return v
+	return v, status
 }
 
 //------------------------------------------------------------------------------
@@ -369,15 +375,8 @@ func _gotk_go_callback_handler(clidataup unsafe.Pointer, objc int, objv unsafe.P
 		return C.TCL_ERROR
 	}
 
-	f := reflect.ValueOf(cb)
-	if f.Kind() != reflect.Func {
-		msg := C.CString("Trying to invoke a non-function callback")
-		C._gotk_c_tcl_set_result(ir.C, msg)
-		return C.TCL_ERROR
-	}
-
 	ir.valuesbuf = ir.valuesbuf[:0]
-
+	f := reflect.ValueOf(cb)
 	ft := f.Type()
 	for i, n := 0, ft.NumIn(); i < n; i++ {
 		in := ft.In(i)
@@ -388,43 +387,8 @@ func _gotk_go_callback_handler(clidataup unsafe.Pointer, objc int, objv unsafe.P
 			continue
 		}
 
-		var status C.int
-		var v reflect.Value
-
-		switch in.Kind() {
-		case reflect.Int:
-			var out C.Tcl_WideInt
-			status = C.Tcl_GetWideIntFromObj(ir.C, args[i], &out)
-			if status != C.TCL_OK {
-				return C.TCL_ERROR
-			}
-
-			v = reflect.New(in).Elem()
-			v.SetInt(int64(out))
-		case reflect.String:
-			v = reflect.New(in).Elem()
-			v.SetString(C.GoString(C.Tcl_GetString(args[i])))
-		case reflect.Float32:
-			var out C.double
-			v = reflect.New(in).Elem()
-			status = C.Tcl_GetDoubleFromObj(ir.C, args[i], &out)
-			if status != C.TCL_OK {
-				return C.TCL_ERROR
-			}
-
-			v.SetFloat(float64(out))
-		case reflect.Float64:
-			var out C.double
-			v = reflect.New(in).Elem()
-			status = C.Tcl_GetDoubleFromObj(ir.C, args[i], &out)
-			if status != C.TCL_OK {
-				return C.TCL_ERROR
-			}
-
-			v.SetFloat(float64(out))
-		default:
-			msg := C.CString("Fail")
-			C._gotk_c_tcl_set_result(ir.C, msg)
+		v, status := ir.tclObjToGoValue(args[i], in)
+		if status != C.TCL_OK {
 			return C.TCL_ERROR
 		}
 
@@ -444,6 +408,10 @@ func _gotk_go_callback_deleter(data unsafe.Pointer) {
 }
 
 func (ir *Interpreter) RegisterCallback(name string, cbfunc interface{}) {
+	typ := reflect.TypeOf(cbfunc)
+	if typ.Kind() != reflect.Func {
+		panic("RegisterCallback only accepts functions as a second argument")
+	}
 	ir.callbacks[name] = cbfunc
 	cp, cn := _GoStringToCGoString(name)
 	cname := C.CString(name)
@@ -473,7 +441,7 @@ func _gotk_go_channel_handler(clidataup unsafe.Pointer, objc int, objv unsafe.Po
 	ir := (*Interpreter)(clidata.go_interp)
 	args := (*(*[alot]*C.Tcl_Obj)(objv))[1:objc]
 	if len(args) != 2 {
-		msg := C.CString("gosend: argument count mismatch, expected two: <- VALUE")
+		msg := C.CString("Argument count mismatch, expected two: <- VALUE")
 		C._gotk_c_tcl_set_result(ir.C, msg)
 		return C.TCL_ERROR
 	}
@@ -483,13 +451,17 @@ func _gotk_go_channel_handler(clidataup unsafe.Pointer, objc int, objv unsafe.Po
 	var ch interface{}
 	var ok bool
 	if ch, ok = ir.channels[name]; !ok {
-		msg := C.CString("gosend: trying to send to a non-existent channel")
+		msg := C.CString("Trying to send to a non-existent channel")
 		C._gotk_c_tcl_set_result(ir.C, msg)
 		return C.TCL_ERROR
 	}
 
 	val := reflect.ValueOf(ch)
-	arg := ir.tclObjToGoValue(args[1], val.Type().Elem())
+	arg, status := ir.tclObjToGoValue(args[1], val.Type().Elem())
+	if status != C.TCL_OK {
+		return C.TCL_ERROR
+	}
+
 	val.Send(arg)
 	return C.TCL_OK
 }
@@ -502,6 +474,11 @@ func _gotk_go_channel_deleter(data unsafe.Pointer) {
 }
 
 func (ir *Interpreter) RegisterChannel(name string, ch interface{}) {
+	typ := reflect.TypeOf(ch)
+	if typ.Kind() != reflect.Chan {
+		panic("RegisterChannel only accepts channels as a second argument")
+	}
+
 	ir.channels[name] = ch
 	cp, cn := _GoStringToCGoString(name)
 	cname := C.CString(name)
