@@ -93,6 +93,7 @@ import (
 	"reflect"
 	"unsafe"
 	"bytes"
+	"fmt"
 	"os"
 )
 
@@ -280,7 +281,7 @@ func NewInterpreter() (*Interpreter, os.Error) {
 	return ir, nil
 }
 
-func (ir *Interpreter) Eval(args ...string) os.Error {
+func (ir *Interpreter) Eval(args ...string) {
 	for _, arg := range args {
 		ir.cmdbuf.WriteString(arg)
 		ir.cmdbuf.WriteString(" ")
@@ -297,9 +298,8 @@ func (ir *Interpreter) Eval(args ...string) os.Error {
 	status := C.Tcl_Eval(ir.C, cs)
 	C.free_string(cs)
 	if status != C.TCL_OK {
-		return os.NewError(C.GoString(ir.C.result))
+		fmt.Fprintln(os.Stderr, C.GoString(ir.C.result))
 	}
-	return nil
 }
 
 func (ir *Interpreter) MainLoop() {
