@@ -1,4 +1,4 @@
-package gotk
+package gothic
 
 /*
 #cgo LDFLAGS: -ltcl8.5 -ltk8.5

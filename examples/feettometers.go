@@ -1,10 +1,10 @@
 package main
 
-import "github.com/nsf/gotk"
+import "github.com/nsf/gothic"
 import "strconv"
 
 func main() {
-	ir, err := gotk.NewInterpreter()
+	ir, err := gothic.NewInterpreter()
 	if err != nil {
 		panic(err)
 	}

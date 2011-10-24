@@ -1,7 +1,7 @@
 package main
 
 import "fmt"
-import "github.com/nsf/gotk"
+import "github.com/nsf/gothic"
 
 func dispatcher(c <-chan string) {
 	for v := range c {
@@ -17,7 +17,7 @@ func dispatcher(c <-chan string) {
 }
 
 func main() {
-	ir, err := gotk.NewInterpreter()
+	ir, err := gothic.NewInterpreter()
 	if err != nil {
 		panic(err)
 	}
