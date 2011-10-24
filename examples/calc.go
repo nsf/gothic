@@ -65,7 +65,7 @@ func main() {
 	})
 
 	ir.RegisterCallback("applyOp", func(op string) {
-		if afterOp {
+		if afterOp && lastOp != "=" {
 			return
 		}
 		applyOp(op, calcTextVar)
