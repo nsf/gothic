@@ -106,12 +106,12 @@ static Tcl_Event *_gotk_c_new_async_eval_event(void *go_interp)
 	ev->go_interp = go_interp;
 	return (Tcl_Event*)ev;
 }
-
 */
 import "C"
 import (
 	"reflect"
 	"unsafe"
+	"image"
 	"bytes"
 	"fmt"
 	"os"
@@ -331,6 +331,30 @@ func (ir *Interpreter) MainLoop() {
 	C.Tk_MainLoop()
 }
 
+func (ir *Interpreter) UploadImage(name string, img *image.NRGBA) {
+	cname := C.CString(name)
+	handle := C.Tk_FindPhoto(ir.C, cname)
+	if handle == nil {
+		ir.Eval("image create photo", name)
+		handle = C.Tk_FindPhoto(ir.C, cname)
+		if handle == nil {
+			panic("something terrible has happened")
+		}
+	}
+	C.free_string(cname)
+	block := C.Tk_PhotoImageBlock{
+		(*C.uchar)(unsafe.Pointer(&img.Pix[0])),
+		C.int(img.Rect.Size().X),
+		C.int(img.Rect.Size().Y),
+		C.int(img.Stride),
+		4,
+		[...]C.int{0, 1, 2, 3},
+	}
+
+	C.Tk_PhotoPutBlock_NoComposite(handle, &block, 0, 0,
+		C.int(img.Rect.Size().X), C.int(img.Rect.Size().Y))
+}
+
 func (ir *Interpreter) tclObjToGoValue(obj *C.Tcl_Obj, typ reflect.Type) (reflect.Value, C.int) {
 	var status C.int
 	v := reflect.New(typ).Elem()
@@ -514,7 +538,6 @@ func (ir *Interpreter) AsyncEval(args ...string) {
 	C.Tcl_ThreadQueueEvent(ir.thread, ev, C.TCL_QUEUE_TAIL)
 	C.Tcl_ThreadAlert(ir.thread)
 }
-
 
 //export _gotk_go_asynceval_handler
 func _gotk_go_asynceval_handler(ev unsafe.Pointer, flags int) int {
