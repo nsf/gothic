@@ -331,7 +331,19 @@ func (ir *Interpreter) MainLoop() {
 	C.Tk_MainLoop()
 }
 
-func (ir *Interpreter) UploadImage(name string, img *image.NRGBA) {
+func (ir *Interpreter) UploadImage(name string, img image.Image) {
+	nrgba, ok := img.(*image.NRGBA)
+	if !ok {
+		// let's do it slowpoke
+		bounds := img.Bounds()
+		nrgba = image.NewNRGBA(bounds)
+		for x := 0; x < bounds.Max.X; x++ {
+			for y := 0; y < bounds.Max.Y; y++ {
+				nrgba.Set(x, y, img.At(x, y))
+			}
+		}
+	}
+
 	cname := C.CString(name)
 	handle := C.Tk_FindPhoto(ir.C, cname)
 	if handle == nil {
@@ -343,16 +355,17 @@ func (ir *Interpreter) UploadImage(name string, img *image.NRGBA) {
 	}
 	C.free_string(cname)
 	block := C.Tk_PhotoImageBlock{
-		(*C.uchar)(unsafe.Pointer(&img.Pix[0])),
-		C.int(img.Rect.Size().X),
-		C.int(img.Rect.Size().Y),
-		C.int(img.Stride),
+		(*C.uchar)(unsafe.Pointer(&nrgba.Pix[0])),
+		C.int(nrgba.Rect.Max.X),
+		C.int(nrgba.Rect.Max.Y),
+		C.int(nrgba.Stride),
 		4,
 		[...]C.int{0, 1, 2, 3},
 	}
 
 	C.Tk_PhotoPutBlock_NoComposite(handle, &block, 0, 0,
-		C.int(img.Rect.Size().X), C.int(img.Rect.Size().Y))
+		C.int(nrgba.Rect.Max.X), C.int(nrgba.Rect.Max.Y))
+
 }
 
 func (ir *Interpreter) tclObjToGoValue(obj *C.Tcl_Obj, typ reflect.Type) (reflect.Value, C.int) {

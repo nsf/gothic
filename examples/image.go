@@ -5,7 +5,7 @@ import "image/png"
 import "image"
 import "os"
 
-func loadPNG(filename string) *image.NRGBA {
+func loadPNG(filename string) image.Image {
 	f, err := os.Open(filename)
 	if err != nil {
 		panic(err)
@@ -15,13 +15,7 @@ func loadPNG(filename string) *image.NRGBA {
 	if err != nil {
 		panic(err)
 	}
-
-	rgba, ok := img.(*image.NRGBA)
-	if !ok {
-		panic("image must be in image.NRGBA format")
-	}
-
-	return rgba
+	return img
 }
 
 func main() {
