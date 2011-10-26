@@ -19,7 +19,7 @@ func main() {
 			}
 			i += inc
 			time.Sleep(5e7)
-			ir.AsyncEval(`.bar1 configure -value`, i)
+			ir.AsyncEval(`.bar1 configure -value `, i)
 		}
 	}()
 
@@ -28,7 +28,7 @@ func main() {
 		i := 0
 		inc := -1
 		closure := func() {
-			ir.Eval(`.bar2 configure -value`, i)
+			ir.Eval(`.bar2 configure -value `, i)
 		}
 
 		for {

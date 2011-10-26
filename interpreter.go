@@ -122,7 +122,6 @@ import (
 	"reflect"
 	"unsafe"
 	"image"
-	"bytes"
 	"fmt"
 	"os"
 )
@@ -286,9 +285,6 @@ type Interpreter struct {
 	// just a buffer to avoid allocs in _gotk_go_callback_handler
 	valuesbuf []reflect.Value
 
-	// another buffer for Eval command construction
-	cmdbuf bytes.Buffer
-
 	thread C.Tcl_ThreadId
 	queue chan asyncAction
 
@@ -319,13 +315,7 @@ func NewInterpreter() (*Interpreter, os.Error) {
 }
 
 func (ir *Interpreter) Eval(args ...interface{}) {
-	for _, arg := range args {
-		ir.cmdbuf.WriteString(fmt.Sprint(arg))
-		ir.cmdbuf.WriteString(" ")
-	}
-
-	s := ir.cmdbuf.String()
-	ir.cmdbuf.Reset()
+	s := fmt.Sprint(args...)
 
 	if debug {
 		println(s)
@@ -360,7 +350,7 @@ func (ir *Interpreter) UploadImage(name string, img image.Image) {
 	cname := C.CString(name)
 	handle := C.Tk_FindPhoto(ir.C, cname)
 	if handle == nil {
-		ir.Eval("image create photo", name)
+		ir.Eval("image create photo ", name)
 		handle = C.Tk_FindPhoto(ir.C, cname)
 		if handle == nil {
 			panic("something terrible has happened")
@@ -582,13 +572,7 @@ func _gotk_go_async_handler(ev unsafe.Pointer, flags int) int {
 //------------------------------------------------------------------------------
 
 func (ir *Interpreter) AsyncEval(args ...interface{}) {
-	var out bytes.Buffer
-	for _, arg := range args {
-		out.WriteString(fmt.Sprint(arg))
-		out.WriteString(" ")
-	}
-	ir.queueEval <- out.String()
-
+	ir.queueEval <- fmt.Sprint(args...)
 	ev := C._gotk_c_new_asynceval_event(unsafe.Pointer(ir))
 	C.Tcl_ThreadQueueEvent(ir.thread, ev, C.TCL_QUEUE_TAIL)
 	C.Tcl_ThreadAlert(ir.thread)

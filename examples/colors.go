@@ -16,7 +16,7 @@ func main() {
 		}
 		RGB[idx] = int(x)
 		col := fmt.Sprintf("%02X%02X%02X", RGB[0], RGB[1], RGB[2])
-		ir.Eval(`ttk::style configure My.TFrame -background #` + col)
+		ir.Eval(`ttk::style configure My.TFrame -background #`, col)
 	})
 
 	ir.Eval(`
