@@ -27,8 +27,8 @@ ttk::scale .scaleR -from 0 -to 255 -length 200 -command {scaleUpdate 0}
 ttk::scale .scaleG -from 0 -to 255 -length 200 -command {scaleUpdate 1}
 ttk::scale .scaleB -from 0 -to 255 -length 200 -command {scaleUpdate 2}
 
-pack .frame -fill both
-pack .scaleR .scaleG .scaleB
+pack .frame -fill both -expand true
+pack .scaleR .scaleG .scaleB -fill both
 	`)
 	ir.MainLoop()
 }

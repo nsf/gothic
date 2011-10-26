@@ -2,7 +2,6 @@ package main
 
 import "github.com/nsf/gothic"
 import "time"
-import "fmt"
 
 func main() {
 	ir, err := gothic.NewInterpreter()
@@ -19,7 +18,7 @@ func main() {
 			}
 			i += inc
 			time.Sleep(5e7)
-			ir.AsyncEval(fmt.Sprintf(`.bar configure -value %d`, i))
+			ir.AsyncEval(`.bar configure -value`, i)
 		}
 	}()
 

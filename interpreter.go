@@ -88,19 +88,29 @@ static void _gotk_c_add_channel(Tcl_Interp *interp, const char *name,
 }
 
 //------------------------------------------------------------------------------
-// Async Eval
+// Async
 //------------------------------------------------------------------------------
 
 typedef struct {
 	Tcl_Event header;
 	void *go_interp;
-} GoTkAsyncEvalEvent;
+} GoTkAsyncEvent;
 
+extern int _gotk_go_async_handler(Tcl_Event*, int);
 extern int _gotk_go_asynceval_handler(Tcl_Event*, int);
 
-static Tcl_Event *_gotk_c_new_async_eval_event(void *go_interp)
+static Tcl_Event *_gotk_c_new_async_event(void *go_interp)
 {
-	GoTkAsyncEvalEvent *ev = (GoTkAsyncEvalEvent*)Tcl_Alloc(sizeof(GoTkAsyncEvalEvent));
+	GoTkAsyncEvent *ev = (GoTkAsyncEvent*)Tcl_Alloc(sizeof(GoTkAsyncEvent));
+	ev->header.proc = _gotk_go_async_handler;
+	ev->header.nextPtr = 0;
+	ev->go_interp = go_interp;
+	return (Tcl_Event*)ev;
+}
+
+static Tcl_Event *_gotk_c_new_asynceval_event(void *go_interp)
+{
+	GoTkAsyncEvent *ev = (GoTkAsyncEvent*)Tcl_Alloc(sizeof(GoTkAsyncEvent));
 	ev->header.proc = _gotk_go_asynceval_handler;
 	ev->header.nextPtr = 0;
 	ev->go_interp = go_interp;
@@ -280,7 +290,9 @@ type Interpreter struct {
 	cmdbuf bytes.Buffer
 
 	thread C.Tcl_ThreadId
-	queue chan string
+	queue chan asyncAction
+
+	queueEval chan string
 }
 
 func NewInterpreter() (*Interpreter, os.Error) {
@@ -289,7 +301,8 @@ func NewInterpreter() (*Interpreter, os.Error) {
 		callbacks: make(map[string]interface{}),
 		channels:  make(map[string]interface{}),
 		valuesbuf: make([]reflect.Value, 0, 10),
-		queue:     make(chan string, 50),
+		queue:     make(chan asyncAction, 50),
+		queueEval: make(chan string, 50),
 	}
 
 	status := C.Tcl_Init(ir.C)
@@ -305,9 +318,9 @@ func NewInterpreter() (*Interpreter, os.Error) {
 	return ir, nil
 }
 
-func (ir *Interpreter) Eval(args ...string) {
+func (ir *Interpreter) Eval(args ...interface{}) {
 	for _, arg := range args {
-		ir.cmdbuf.WriteString(arg)
+		ir.cmdbuf.WriteString(fmt.Sprint(arg))
 		ir.cmdbuf.WriteString(" ")
 	}
 
@@ -536,26 +549,55 @@ func (ir *Interpreter) UnregisterChannel(name string) {
 }
 
 //------------------------------------------------------------------------------
+// Interpreter.Async
+//------------------------------------------------------------------------------
+
+type asyncAction struct {
+	action func()
+	responseChan chan<- interface{}
+	arg interface{}
+}
+
+func (ir *Interpreter) Async(action func(), responseChan chan<- interface{}, arg interface{}) {
+	ir.queue <- asyncAction{action, responseChan, arg}
+	ev := C._gotk_c_new_async_event(unsafe.Pointer(ir))
+	C.Tcl_ThreadQueueEvent(ir.thread, ev, C.TCL_QUEUE_TAIL)
+	C.Tcl_ThreadAlert(ir.thread)
+}
+
+//export _gotk_go_async_handler
+func _gotk_go_async_handler(ev unsafe.Pointer, flags int) int {
+	event := (*C.GoTkAsyncEvent)(ev)
+	ir := (*Interpreter)(event.go_interp)
+	action := <-ir.queue
+	action.action()
+	if action.responseChan != nil {
+		action.responseChan <- action.arg
+	}
+	return 1
+}
+
+//------------------------------------------------------------------------------
 // Interpreter.AsyncEval
 //------------------------------------------------------------------------------
 
-func (ir *Interpreter) AsyncEval(args ...string) {
-	var buf bytes.Buffer
+func (ir *Interpreter) AsyncEval(args ...interface{}) {
+	var out bytes.Buffer
 	for _, arg := range args {
-		buf.WriteString(arg)
-		buf.WriteString(" ")
+		out.WriteString(fmt.Sprint(arg))
+		out.WriteString(" ")
 	}
+	ir.queueEval <- out.String()
 
-	ir.queue <- buf.String()
-	ev := C._gotk_c_new_async_eval_event(unsafe.Pointer(ir))
+	ev := C._gotk_c_new_asynceval_event(unsafe.Pointer(ir))
 	C.Tcl_ThreadQueueEvent(ir.thread, ev, C.TCL_QUEUE_TAIL)
 	C.Tcl_ThreadAlert(ir.thread)
 }
 
 //export _gotk_go_asynceval_handler
 func _gotk_go_asynceval_handler(ev unsafe.Pointer, flags int) int {
-	event := (*C.GoTkAsyncEvalEvent)(ev)
+	event := (*C.GoTkAsyncEvent)(ev)
 	ir := (*Interpreter)(event.go_interp)
-	ir.Eval(<-ir.queue)
+	ir.Eval(<-ir.queueEval)
 	return 1
 }
