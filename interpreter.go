@@ -8,9 +8,10 @@ package gothic
 #include <tk.h>
 
 typedef struct {
-	void *go_interp;
-	char *p; // go string ptr
-	int n;   // go string len
+	void *go_interp; // go tcl/tk Interpreter
+	char *strp;      // go string ptr
+	int strn;        // go string len
+	void *iface[2];  // go interface
 } GoTkClientData;
 
 static inline void free_string(char *s)
@@ -21,6 +22,21 @@ static inline void free_string(char *s)
 static inline void _gotk_c_tcl_set_result(Tcl_Interp *interp, char *result)
 {
 	Tcl_SetResult(interp, result, free_string);
+}
+
+static inline GoTkClientData *_gotk_c_client_data_new(
+	void *go_interp,
+	char *strp,
+	int strn,
+	void **iface)
+{
+	GoTkClientData *cd = malloc(sizeof(GoTkClientData));
+	cd->go_interp = go_interp;
+	cd->strp = strp;
+	cd->strn = strn;
+	cd->iface[0] = iface[0];
+	cd->iface[1] = iface[1];
+	return cd;
 }
 
 //------------------------------------------------------------------------------
@@ -44,13 +60,10 @@ static void _gotk_c_callback_deleter(ClientData cd)
 }
 
 static void _gotk_c_add_callback(Tcl_Interp *interp, const char *name,
-				 void *go_interp, char *p, int n)
+				 void *go_interp, char *strp, int strn,
+				 void **iface)
 {
-	GoTkClientData *cd = malloc(sizeof(GoTkClientData));
-	cd->go_interp = go_interp;
-	cd->p = p;
-	cd->n = n;
-
+	GoTkClientData *cd = _gotk_c_client_data_new(go_interp, strp, strn, iface);
 	Tcl_CreateObjCommand(interp, name, _gotk_c_callback_handler,
 			     (ClientData)cd, _gotk_c_callback_deleter);
 }
@@ -76,13 +89,10 @@ static void _gotk_c_channel_deleter(ClientData cd)
 }
 
 static void _gotk_c_add_channel(Tcl_Interp *interp, const char *name,
-				void *go_interp, char *p, int n)
+				void *go_interp, char *strp, int strn,
+				void **iface)
 {
-	GoTkClientData *cd = malloc(sizeof(GoTkClientData));
-	cd->go_interp = go_interp;
-	cd->p = p;
-	cd->n = n;
-
+	GoTkClientData *cd = _gotk_c_client_data_new(go_interp, strp, strn, iface);
 	Tcl_CreateObjCommand(interp, name, _gotk_c_channel_handler,
 			     (ClientData)cd, _gotk_c_channel_deleter);
 }
@@ -145,6 +155,14 @@ func _CGoStringToGoString(p *C.char, n C.int) string {
 func _GoStringToCGoString(s string) (*C.char, C.int) {
 	x := *(*reflect.StringHeader)(unsafe.Pointer(&s))
 	return (*C.char)(unsafe.Pointer(x.Data)), C.int(x.Len)
+}
+
+func _CInterfaceToGoInterface(iface [2]unsafe.Pointer) interface{} {
+	return *(*interface{})(unsafe.Pointer(&iface))
+}
+
+func _GoInterfacetoCInterface(iface interface{}) *unsafe.Pointer {
+	return (*unsafe.Pointer)(unsafe.Pointer(&iface))
 }
 
 //------------------------------------------------------------------------------
@@ -407,17 +425,11 @@ func _gotk_go_callback_handler(clidataup unsafe.Pointer, objc int, objv unsafe.P
 	clidata := (*C.GoTkClientData)(clidataup)
 	ir := (*Interpreter)(clidata.go_interp)
 	args := (*(*[alot]*C.Tcl_Obj)(objv))[1:objc]
-
-	cb, ok := ir.callbacks[_CGoStringToGoString(clidata.p, clidata.n)]
-	if !ok {
-		msg := C.CString("Trying to invoke a non-existent callback")
-		C._gotk_c_tcl_set_result(ir.C, msg)
-		return C.TCL_ERROR
-	}
-
-	ir.valuesbuf = ir.valuesbuf[:0]
+	cb := _CInterfaceToGoInterface(clidata.iface)
 	f := reflect.ValueOf(cb)
 	ft := f.Type()
+
+	ir.valuesbuf = ir.valuesbuf[:0]
 	for i, n := 0, ft.NumIn(); i < n; i++ {
 		in := ft.In(i)
 
@@ -444,7 +456,7 @@ func _gotk_go_callback_handler(clidataup unsafe.Pointer, objc int, objv unsafe.P
 func _gotk_go_callback_deleter(data unsafe.Pointer) {
 	clidata := (*C.GoTkClientData)(data)
 	ir := (*Interpreter)(clidata.go_interp)
-	ir.callbacks[_CGoStringToGoString(clidata.p, clidata.n)] = nil, false
+	ir.callbacks[_CGoStringToGoString(clidata.strp, clidata.strn)] = nil, false
 }
 
 func (ir *Interpreter) RegisterCallback(name string, cbfunc interface{}) {
@@ -455,7 +467,8 @@ func (ir *Interpreter) RegisterCallback(name string, cbfunc interface{}) {
 	ir.callbacks[name] = cbfunc
 	cp, cn := _GoStringToCGoString(name)
 	cname := C.CString(name)
-	C._gotk_c_add_callback(ir.C, cname, unsafe.Pointer(ir), cp, cn)
+	C._gotk_c_add_callback(ir.C, cname, unsafe.Pointer(ir), cp, cn,
+		_GoInterfacetoCInterface(cbfunc))
 	C.free_string(cname)
 }
 
@@ -486,16 +499,7 @@ func _gotk_go_channel_handler(clidataup unsafe.Pointer, objc int, objv unsafe.Po
 		return C.TCL_ERROR
 	}
 
-	name := _CGoStringToGoString(clidata.p, clidata.n)
-
-	var ch interface{}
-	var ok bool
-	if ch, ok = ir.channels[name]; !ok {
-		msg := C.CString("Trying to send to a non-existent channel")
-		C._gotk_c_tcl_set_result(ir.C, msg)
-		return C.TCL_ERROR
-	}
-
+	ch := _CInterfaceToGoInterface(clidata.iface)
 	val := reflect.ValueOf(ch)
 	arg, status := ir.tclObjToGoValue(args[1], val.Type().Elem())
 	if status != C.TCL_OK {
@@ -510,7 +514,7 @@ func _gotk_go_channel_handler(clidataup unsafe.Pointer, objc int, objv unsafe.Po
 func _gotk_go_channel_deleter(data unsafe.Pointer) {
 	clidata := (*C.GoTkClientData)(data)
 	ir := (*Interpreter)(clidata.go_interp)
-	ir.channels[_CGoStringToGoString(clidata.p, clidata.n)] = nil, false
+	ir.channels[_CGoStringToGoString(clidata.strp, clidata.strn)] = nil, false
 }
 
 func (ir *Interpreter) RegisterChannel(name string, ch interface{}) {
@@ -522,7 +526,8 @@ func (ir *Interpreter) RegisterChannel(name string, ch interface{}) {
 	ir.channels[name] = ch
 	cp, cn := _GoStringToCGoString(name)
 	cname := C.CString(name)
-	C._gotk_c_add_channel(ir.C, cname, unsafe.Pointer(ir), cp, cn)
+	C._gotk_c_add_channel(ir.C, cname, unsafe.Pointer(ir), cp, cn,
+		_GoInterfacetoCInterface(ch))
 	C.free_string(cname)
 }
 
