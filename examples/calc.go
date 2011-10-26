@@ -132,29 +132,34 @@ grid columnconfigure . 2 -weight 1
 grid columnconfigure . 3 -weight 1
 
 bind . 0             { appendNum 0 }
-bind . 1             { appendNum 1 }
-bind . 2             { appendNum 2 }
-bind . 3             { appendNum 3 }
-bind . 4             { appendNum 4 }
-bind . 5             { appendNum 5 }
-bind . 6             { appendNum 6 }
-bind . 7             { appendNum 7 }
-bind . 8             { appendNum 8 }
-bind . 9             { appendNum 9 }
 bind . <KP_Insert>   { appendNum 0 }
+bind . 1             { appendNum 1 }
 bind . <KP_End>      { appendNum 1 }
+bind . 2             { appendNum 2 }
 bind . <KP_Down>     { appendNum 2 }
+bind . 3             { appendNum 3 }
 bind . <KP_Next>     { appendNum 3 }
+bind . 4             { appendNum 4 }
 bind . <KP_Left>     { appendNum 4 }
+bind . 5             { appendNum 5 }
 bind . <KP_Begin>    { appendNum 5 }
+bind . 6             { appendNum 6 }
 bind . <KP_Right>    { appendNum 6 }
+bind . 7             { appendNum 7 }
 bind . <KP_Home>     { appendNum 7 }
+bind . 8             { appendNum 8 }
 bind . <KP_Up>       { appendNum 8 }
+bind . 9             { appendNum 9 }
 bind . <KP_Prior>    { appendNum 9 }
+bind . +             { applyOp + }
 bind . <KP_Add>      { applyOp + }
+bind . -             { applyOp - }
 bind . <KP_Subtract> { applyOp - }
+bind . *             { applyOp * }
 bind . <KP_Multiply> { applyOp * }
+bind . /             { applyOp / }
 bind . <KP_Divide>   { applyOp / }
+bind . <Return>      { applyOp = }
 bind . <KP_Enter>    { applyOp = }
 bind . <BackSpace>   { clearAll }
 	`)
