@@ -181,7 +181,7 @@ func (ir *Interpreter) NewStringVar(name string) *StringVar {
 		C.TCL_LINK_STRING)
 	C.free_string(cname)
 	if status != C.TCL_OK {
-		panic(C.GoString(ir.C.result))
+		panic(C.GoString(C.Tcl_GetStringResult(ir.C)))
 	}
 	return sv
 }
@@ -218,7 +218,7 @@ func (ir *Interpreter) NewFloatVar(name string) *FloatVar {
 		C.TCL_LINK_DOUBLE)
 	C.free_string(cname)
 	if status != C.TCL_OK {
-		panic(C.GoString(ir.C.result))
+		panic(C.GoString(C.Tcl_GetStringResult(ir.C)))
 	}
 	return fv
 }
@@ -255,7 +255,7 @@ func (ir *Interpreter) NewIntVar(name string) *IntVar {
 		C.TCL_LINK_WIDE_INT)
 	C.free_string(cname)
 	if status != C.TCL_OK {
-		panic(C.GoString(ir.C.result))
+		panic(C.GoString(C.Tcl_GetStringResult(ir.C)))
 	}
 	return iv
 }
@@ -294,12 +294,12 @@ func NewInterpreter() (*Interpreter, os.Error) {
 
 	status := C.Tcl_Init(ir.C)
 	if status != C.TCL_OK {
-		return nil, os.NewError(C.GoString(ir.C.result))
+		return nil, os.NewError(C.GoString(C.Tcl_GetStringResult(ir.C)))
 	}
 
 	status = C.Tk_Init(ir.C)
 	if status != C.TCL_OK {
-		return nil, os.NewError(C.GoString(ir.C.result))
+		return nil, os.NewError(C.GoString(C.Tcl_GetStringResult(ir.C)))
 	}
 
 	return ir, nil
@@ -322,7 +322,7 @@ func (ir *Interpreter) Eval(args ...string) {
 	status := C.Tcl_Eval(ir.C, cs)
 	C.free_string(cs)
 	if status != C.TCL_OK {
-		fmt.Fprintln(os.Stderr, C.GoString(ir.C.result))
+		fmt.Fprintln(os.Stderr, C.GoString(C.Tcl_GetStringResult(ir.C)))
 	}
 }
 
@@ -464,7 +464,7 @@ func (ir *Interpreter) UnregisterCallback(name string) {
 	status := C.Tcl_DeleteCommand(ir.C, cname)
 	C.free_string(cname)
 	if status != C.TCL_OK {
-		panic(C.GoString(ir.C.result))
+		panic(C.GoString(C.Tcl_GetStringResult(ir.C)))
 	}
 }
 
@@ -531,7 +531,7 @@ func (ir *Interpreter) UnregisterChannel(name string) {
 	status := C.Tcl_DeleteCommand(ir.C, cname)
 	C.free_string(cname)
 	if status != C.TCL_OK {
-		panic(C.GoString(ir.C.result))
+		panic(C.GoString(C.Tcl_GetStringResult(ir.C)))
 	}
 }
 
