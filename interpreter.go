@@ -554,35 +554,3 @@ func _gotk_go_async_handler(ev unsafe.Pointer, flags int) int {
 	}
 	return 1
 }
-
-//------------------------------------------------------------------------------
-// interpreter.link
-//------------------------------------------------------------------------------
-
-/*
-func (ir *interpreter) updateLinkedVar(name *C.char) {
-	vl := C._gotk_c_get_link(ir.C, name)
-	linkvar := _CInterfaceToGoInterface(vl.iface).(linkedVar)
-}
-
-//export _gotk_go_link_trace_handler
-func _gotk_go_link_trace_handler(clidataup, interpup unsafe.Pointer,
-				 name1, name2 *C.char, flags int) *C.char {
-	vl := (*C.GoTkVarLink)(clidataup)
-	interp := (*C.Tcl_Interp)(interpup)
-	linkvar := _CInterfaceToGoInterface(vl.iface).(linkedVar)
-	switch {
-	case flags & C.TCL_TRACE_UNSETS != 0:
-		if C.Tcl_InterpDeleted(interp) != 0 {
-			C.Tcl_DecrRefCount(vl.name)
-			C.free(clidataup)
-		} else if flags & C.TCL_TRACE_DESTROYED != 0 {
-			C._gotk_c_recreate_link_var(interp, vl);
-		}
-
-		return nil
-	case flags & C.TCL_TRACE_WRITES != 0:
-
-	}
-}
-*/
