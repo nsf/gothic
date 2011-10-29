@@ -237,7 +237,6 @@ func (ir *Interpreter) run(clo func()) {
 	runtime.LockOSThread()
 	if C.Tcl_GetCurrentThread() == ir.ir.thread {
 		clo()
-		runtime.UnlockOSThread()
 		return
 	}
 	runtime.UnlockOSThread()
