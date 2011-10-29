@@ -7,8 +7,8 @@ var args [2]*big.Int
 var lastOp string
 var afterOp = true
 
-func applyOp(op string, text *gothic.StringVar) {
-	num := text.Get()
+func applyOp(op string, ir *gothic.Interpreter) {
+	num := ir.EvalAsString("set calcText")
 	if args[0] == nil {
 		if op != "=" {
 			args[0] = big.NewInt(0)
@@ -40,61 +40,16 @@ func applyOp(op string, text *gothic.StringVar) {
 	lastOp = op
 	args[1] = nil
 
-	text.Set(args[0].String())
+	ir.Eval("set calcText ", args[0])
 	if op == "=" {
 		args[0] = nil
 	}
 }
 
 func main() {
-	ir, err := gothic.NewInterpreter()
-	if err != nil {
-		panic(err)
-	}
-
-	lastOpVar := ir.NewStringVar("lastOp")
-	calcTextVar := ir.NewStringVar("calcText")
-	calcTextVar.Set("0")
-
-	ir.RegisterCallback("appendNum", func(n string) {
-		if afterOp {
-			afterOp = false
-			calcTextVar.Set("")
-		}
-		calcTextVar.Set(calcTextVar.Get() + n)
-	})
-
-	ir.RegisterCallback("applyOp", func(op string) {
-		if afterOp && lastOp != "=" {
-			return
-		}
-		applyOp(op, calcTextVar)
-		lastOpVar.Set(lastOp)
-	})
-
-	ir.RegisterCallback("clearAll", func() {
-		args[0] = nil
-		args[1] = nil
-		afterOp = true
-		lastOp = ""
-		lastOpVar.Set("")
-		calcTextVar.Set("0")
-	})
-
-	ir.RegisterCallback("plusMinus", func() {
-		text := calcTextVar.Get()
-		if len(text) == 0 || text[0] == '0' {
-			return
-		}
-
-		if text[0] == '-' {
-			calcTextVar.Set(text[1:])
-		} else {
-			calcTextVar.Set("-" + text) 
-		}
-	})
-
-	ir.Eval(`
+	ir := gothic.NewInterpreter(`
+set lastOp {}
+set calcText 0
 wm title . "GoCalculator"
 grid [ttk::frame .f] -column 0 -row 0 -columnspan 3 -sticky we
 grid [ttk::entry .f.lastop -textvariable lastOp -justify center -state readonly -width 3] -column 0 -row 0 -sticky we
@@ -163,5 +118,44 @@ bind . <Return>      { applyOp = }
 bind . <KP_Enter>    { applyOp = }
 bind . <BackSpace>   { clearAll }
 	`)
-	ir.MainLoop()
+
+	ir.RegisterCommand("appendNum", func(n string) {
+		if afterOp {
+			afterOp = false
+			ir.Eval("set calcText {}")
+		}
+		ir.Eval("append calcText ", n)
+	})
+
+	ir.RegisterCommand("applyOp", func(op string) {
+		if afterOp && lastOp != "=" {
+			return
+		}
+		applyOp(op, ir)
+		ir.Eval("set lastOp ", lastOp)
+	})
+
+	ir.RegisterCommand("clearAll", func() {
+		args[0] = nil
+		args[1] = nil
+		afterOp = true
+		lastOp = ""
+		ir.Eval("set lastOp {}; set calcText 0")
+	})
+
+	ir.RegisterCommand("plusMinus", func() {
+		text := ir.EvalAsString("set calcText")
+		if len(text) == 0 || text[0] == '0' {
+			return
+		}
+
+		if text[0] == '-' {
+			ir.Eval("set calcText ", text[1:])
+		} else {
+			ir.Eval("set calcText ", "-" + text)
+		}
+	})
+
+
+	<-ir.Done
 }

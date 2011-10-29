@@ -9,7 +9,7 @@ package gothic
 #include <tk.h>
 
 typedef struct {
-	void *go_interp; // go tcl/tk Interpreter
+	void *go_interp; // go tcl/tk interpreter
 	char *strp;      // go string ptr
 	int strn;        // go string len
 	void *iface[2];  // go interface
@@ -41,36 +41,36 @@ static inline GoTkClientData *_gotk_c_client_data_new(
 }
 
 //------------------------------------------------------------------------------
-// Callbacks
+// Command
 //------------------------------------------------------------------------------
 
-extern int _gotk_go_callback_handler(GoTkClientData*, int, Tcl_Obj**);
-extern void _gotk_go_callback_deleter(GoTkClientData*);
+extern int _gotk_go_command_handler(GoTkClientData*, int, Tcl_Obj**);
+extern void _gotk_go_command_deleter(GoTkClientData*);
 
-static int _gotk_c_callback_handler(ClientData cd, Tcl_Interp *interp,
+static int _gotk_c_command_handler(ClientData cd, Tcl_Interp *interp,
 				    int objc, Tcl_Obj *CONST objv[])
 {
-	return _gotk_go_callback_handler((GoTkClientData*)cd, objc, (Tcl_Obj**)objv);
+	return _gotk_go_command_handler((GoTkClientData*)cd, objc, (Tcl_Obj**)objv);
 }
 
-static void _gotk_c_callback_deleter(ClientData cd)
+static void _gotk_c_command_deleter(ClientData cd)
 {
 	GoTkClientData *clidata = (GoTkClientData*)cd;
-	_gotk_go_callback_deleter(clidata);
+	_gotk_go_command_deleter(clidata);
 	free(cd);
 }
 
-static void _gotk_c_add_callback(Tcl_Interp *interp, const char *name,
-				 void *go_interp, char *strp, int strn,
-				 void **iface)
+static void _gotk_c_add_command(Tcl_Interp *interp, const char *name,
+				void *go_interp, char *strp, int strn,
+				void **iface)
 {
 	GoTkClientData *cd = _gotk_c_client_data_new(go_interp, strp, strn, iface);
-	Tcl_CreateObjCommand(interp, name, _gotk_c_callback_handler,
-			     (ClientData)cd, _gotk_c_callback_deleter);
+	Tcl_CreateObjCommand(interp, name, _gotk_c_command_handler,
+			     (ClientData)cd, _gotk_c_command_deleter);
 }
 
 //------------------------------------------------------------------------------
-// Channels
+// Channel
 //------------------------------------------------------------------------------
 
 extern int _gotk_go_channel_handler(GoTkClientData*, int, Tcl_Obj**);
@@ -108,7 +108,6 @@ typedef struct {
 } GoTkAsyncEvent;
 
 extern int _gotk_go_async_handler(Tcl_Event*, int);
-extern int _gotk_go_asynceval_handler(Tcl_Event*, int);
 
 static Tcl_Event *_gotk_c_new_async_event(void *go_interp)
 {
@@ -118,19 +117,11 @@ static Tcl_Event *_gotk_c_new_async_event(void *go_interp)
 	ev->go_interp = go_interp;
 	return (Tcl_Event*)ev;
 }
-
-static Tcl_Event *_gotk_c_new_asynceval_event(void *go_interp)
-{
-	GoTkAsyncEvent *ev = (GoTkAsyncEvent*)Tcl_Alloc(sizeof(GoTkAsyncEvent));
-	ev->header.proc = _gotk_go_asynceval_handler;
-	ev->header.nextPtr = 0;
-	ev->go_interp = go_interp;
-	return (Tcl_Event*)ev;
-}
 */
 import "C"
 import (
 	"reflect"
+	"runtime"
 	"unsafe"
 	"image"
 	"fmt"
@@ -138,7 +129,7 @@ import (
 )
 
 const (
-	debug = true
+	debug = false
 	alot  = 999999
 )
 
@@ -167,157 +158,123 @@ func _GoInterfacetoCInterface(iface interface{}) *unsafe.Pointer {
 }
 
 //------------------------------------------------------------------------------
-// StringVar
-//------------------------------------------------------------------------------
-
-type StringVar struct {
-	data *C.char
-	ir   *Interpreter
-	name string
-}
-
-func (sv *StringVar) Get() string {
-	if sv.data == nil {
-		return ""
-	}
-	return C.GoString(sv.data)
-}
-
-func (sv *StringVar) Set(s string) {
-	if sv.data != nil {
-		C.Tcl_Free(sv.data)
-	}
-	sv.data = C.Tcl_Alloc(C.uint(len(s) + 1))
-	svslice := (*((*[alot]byte)(unsafe.Pointer(sv.data))))[:]
-	copy(svslice, s)
-	svslice[len(s)] = 0
-
-	cname := C.CString(sv.name)
-	C.Tcl_UpdateLinkedVar(sv.ir.C, cname)
-	C.free_string(cname)
-}
-
-func (ir *Interpreter) NewStringVar(name string) *StringVar {
-	sv := new(StringVar)
-	sv.ir = ir
-	sv.name = name
-	sv.data = C.Tcl_Alloc(1)
-	(*((*[alot]byte)(unsafe.Pointer(sv.data))))[0] = 0
-
-	cname := C.CString(name)
-	status := C.Tcl_LinkVar(ir.C, cname, (*C.char)(unsafe.Pointer(&sv.data)),
-		C.TCL_LINK_STRING)
-	C.free_string(cname)
-	if status != C.TCL_OK {
-		panic(C.GoString(C.Tcl_GetStringResult(ir.C)))
-	}
-	return sv
-}
-
-//------------------------------------------------------------------------------
-// FloatVar
-//------------------------------------------------------------------------------
-
-type FloatVar struct {
-	data C.double
-	ir   *Interpreter
-	name string
-}
-
-func (fv *FloatVar) Get() float64 {
-	return float64(fv.data)
-}
-
-func (fv *FloatVar) Set(f float64) {
-	fv.data = C.double(f)
-	cname := C.CString(fv.name)
-	C.Tcl_UpdateLinkedVar(fv.ir.C, cname)
-	C.free_string(cname)
-}
-
-func (ir *Interpreter) NewFloatVar(name string) *FloatVar {
-	fv := new(FloatVar)
-	fv.ir = ir
-	fv.name = name
-	fv.data = 0.0
-
-	cname := C.CString(name)
-	status := C.Tcl_LinkVar(ir.C, cname, (*C.char)(unsafe.Pointer(&fv.data)),
-		C.TCL_LINK_DOUBLE)
-	C.free_string(cname)
-	if status != C.TCL_OK {
-		panic(C.GoString(C.Tcl_GetStringResult(ir.C)))
-	}
-	return fv
-}
-
-//------------------------------------------------------------------------------
-// IntVar
-//------------------------------------------------------------------------------
-
-type IntVar struct {
-	data C.Tcl_WideInt
-	ir   *Interpreter
-	name string
-}
-
-func (iv *IntVar) Get() int {
-	return int(iv.data)
-}
-
-func (iv *IntVar) Set(i int) {
-	iv.data = C.Tcl_WideInt(i)
-	cname := C.CString(iv.name)
-	C.Tcl_UpdateLinkedVar(iv.ir.C, cname)
-	C.free_string(cname)
-}
-
-func (ir *Interpreter) NewIntVar(name string) *IntVar {
-	iv := new(IntVar)
-	iv.ir = ir
-	iv.name = name
-	iv.data = 0
-
-	cname := C.CString(name)
-	status := C.Tcl_LinkVar(ir.C, cname, (*C.char)(unsafe.Pointer(&iv.data)),
-		C.TCL_LINK_WIDE_INT)
-	C.free_string(cname)
-	if status != C.TCL_OK {
-		panic(C.GoString(C.Tcl_GetStringResult(ir.C)))
-	}
-	return iv
-}
-
-//------------------------------------------------------------------------------
 // Interpreter
+//
+// A handle that is used to manipulate interpreter. All handle methods can be
+// safely invoked from different threads. Each method invokation is
+// synchornous, it means that the method will be blocked until the action is
+// executed.
 //------------------------------------------------------------------------------
 
 type Interpreter struct {
+	ir *interpreter
+	Done <-chan int
+}
+
+func NewInterpreter(init string) *Interpreter {
+	var ir *interpreter
+	initdone := make(chan interface{})
+	done := make(chan int)
+
+	go func() {
+		var err os.Error
+		runtime.LockOSThread()
+		ir, err = newInterpreter()
+		if err != nil {
+			panic(err)
+		}
+
+		ir.eval(init)
+		ir.async(nil, initdone, nil)
+		ir.mainLoop()
+		done <- 0
+	}()
+
+	<-initdone
+	return &Interpreter{ir, done}
+}
+
+func (ir *Interpreter) Eval(args ...interface{}) {
+	ir.run(func() { ir.ir.eval(args...) })
+}
+
+func (ir *Interpreter) EvalAsString(args ...interface{}) (out string) {
+	ir.run(func() { out = ir.ir.evalAsString(args...) })
+	return
+}
+
+func (ir *Interpreter) EvalAsInt(args ...interface{}) (out int) {
+	ir.run(func() { out = ir.ir.evalAsInt(args...) })
+	return
+}
+
+func (ir *Interpreter) EvalAsFloat(args ...interface{}) (out float64) {
+	ir.run(func() { out = ir.ir.evalAsFloat(args...) })
+	return
+}
+
+func (ir *Interpreter) UploadImage(name string, img image.Image) {
+	ir.run(func() { ir.ir.uploadImage(name, img) })
+}
+
+func (ir *Interpreter) RegisterCommand(name string, cbfunc interface{}) {
+	ir.run(func() { ir.ir.registerCommand(name, cbfunc) })
+}
+
+func (ir *Interpreter) UnregisterCommand(name string) {
+	ir.run(func() { ir.ir.unregisterCommand(name) })
+}
+
+func (ir *Interpreter) RegisterChannel(name string, ch interface{}) {
+	ir.run(func() { ir.ir.registerChannel(name, ch) })
+}
+
+func (ir *Interpreter) UnregisterChannel(name string) {
+	ir.run(func() { ir.ir.unregisterChannel(name) })
+}
+
+func (ir *Interpreter) run(clo func()) {
+	runtime.LockOSThread()
+	if C.Tcl_GetCurrentThread() == ir.ir.thread {
+		clo()
+		runtime.UnlockOSThread()
+		return
+	}
+	runtime.UnlockOSThread()
+
+	done := make(chan interface{})
+	ir.ir.async(clo, done, nil)
+	<-done
+}
+
+//------------------------------------------------------------------------------
+// interpreter
+//------------------------------------------------------------------------------
+
+type interpreter struct {
 	C *C.Tcl_Interp
 
-	// registered callbacks
-	callbacks map[string]interface{}
+	// registered commands
+	commands map[string]interface{}
 
 	// registered channels
 	channels map[string]interface{}
 
-	// just a buffer to avoid allocs in _gotk_go_callback_handler
+	// just a buffer to avoid allocs in _gotk_go_command_handler
 	valuesbuf []reflect.Value
 
 	thread C.Tcl_ThreadId
 	queue chan asyncAction
-
-	queueEval chan string
 }
 
-func NewInterpreter() (*Interpreter, os.Error) {
-	ir := &Interpreter{
-		C:         C.Tcl_CreateInterp(),
-		callbacks: make(map[string]interface{}),
-		channels:  make(map[string]interface{}),
+func newInterpreter() (*interpreter, os.Error) {
+	ir := &interpreter{
+		C: C.Tcl_CreateInterp(),
+		commands: make(map[string]interface{}),
+		channels: make(map[string]interface{}),
 		valuesbuf: make([]reflect.Value, 0, 10),
-		queue:     make(chan asyncAction, 50),
-		queueEval: make(chan string, 50),
+		queue: make(chan asyncAction, 50),
+		thread: C.Tcl_GetCurrentThread(),
 	}
 
 	status := C.Tcl_Init(ir.C)
@@ -333,7 +290,7 @@ func NewInterpreter() (*Interpreter, os.Error) {
 	return ir, nil
 }
 
-func (ir *Interpreter) Eval(args ...interface{}) {
+func (ir *interpreter) eval(args ...interface{}) {
 	s := fmt.Sprint(args...)
 
 	if debug {
@@ -348,12 +305,35 @@ func (ir *Interpreter) Eval(args ...interface{}) {
 	}
 }
 
-func (ir *Interpreter) MainLoop() {
-	ir.thread = C.Tcl_GetCurrentThread()
+func (ir *interpreter) evalAsString(args ...interface{}) string {
+	ir.eval(args...)
+
+	var n C.int
+	str := C.Tcl_GetStringFromObj(C.Tcl_GetObjResult(ir.C), &n)
+	return C.GoStringN(str, n)
+}
+
+func (ir *interpreter) evalAsInt(args ...interface{}) int {
+	ir.eval(args...)
+
+	var i C.Tcl_WideInt
+	C.Tcl_GetWideIntFromObj(ir.C, C.Tcl_GetObjResult(ir.C), &i)
+	return int(i)
+}
+
+func (ir *interpreter) evalAsFloat(args ...interface{}) float64 {
+	ir.eval(args...)
+
+	var f C.double
+	C.Tcl_GetDoubleFromObj(ir.C, C.Tcl_GetObjResult(ir.C), &f)
+	return float64(f)
+}
+
+func (ir *interpreter) mainLoop() {
 	C.Tk_MainLoop()
 }
 
-func (ir *Interpreter) UploadImage(name string, img image.Image) {
+func (ir *interpreter) uploadImage(name string, img image.Image) {
 	nrgba, ok := img.(*image.NRGBA)
 	if !ok {
 		// let's do it slowpoke
@@ -369,7 +349,7 @@ func (ir *Interpreter) UploadImage(name string, img image.Image) {
 	cname := C.CString(name)
 	handle := C.Tk_FindPhoto(ir.C, cname)
 	if handle == nil {
-		ir.Eval("image create photo ", name)
+		ir.eval("image create photo ", name)
 		handle = C.Tk_FindPhoto(ir.C, cname)
 		if handle == nil {
 			panic("something terrible has happened")
@@ -390,7 +370,7 @@ func (ir *Interpreter) UploadImage(name string, img image.Image) {
 
 }
 
-func (ir *Interpreter) tclObjToGoValue(obj *C.Tcl_Obj, typ reflect.Type) (reflect.Value, C.int) {
+func (ir *interpreter) tclObjToGoValue(obj *C.Tcl_Obj, typ reflect.Type) (reflect.Value, C.int) {
 	var status C.int
 	v := reflect.New(typ).Elem()
 
@@ -418,13 +398,13 @@ func (ir *Interpreter) tclObjToGoValue(obj *C.Tcl_Obj, typ reflect.Type) (reflec
 }
 
 //------------------------------------------------------------------------------
-// Interpreter.Callbacks
+// interpreter.commands
 //------------------------------------------------------------------------------
 
-//export _gotk_go_callback_handler
-func _gotk_go_callback_handler(clidataup unsafe.Pointer, objc int, objv unsafe.Pointer) int {
+//export _gotk_go_command_handler
+func _gotk_go_command_handler(clidataup unsafe.Pointer, objc int, objv unsafe.Pointer) int {
 	clidata := (*C.GoTkClientData)(clidataup)
-	ir := (*Interpreter)(clidata.go_interp)
+	ir := (*interpreter)(clidata.go_interp)
 	args := (*(*[alot]*C.Tcl_Obj)(objv))[1:objc]
 	cb := _CInterfaceToGoInterface(clidata.iface)
 	f := reflect.ValueOf(cb)
@@ -453,28 +433,28 @@ func _gotk_go_callback_handler(clidataup unsafe.Pointer, objc int, objv unsafe.P
 	return C.TCL_OK
 }
 
-//export _gotk_go_callback_deleter
-func _gotk_go_callback_deleter(data unsafe.Pointer) {
+//export _gotk_go_command_deleter
+func _gotk_go_command_deleter(data unsafe.Pointer) {
 	clidata := (*C.GoTkClientData)(data)
-	ir := (*Interpreter)(clidata.go_interp)
-	ir.callbacks[_CGoStringToGoString(clidata.strp, clidata.strn)] = nil, false
+	ir := (*interpreter)(clidata.go_interp)
+	ir.commands[_CGoStringToGoString(clidata.strp, clidata.strn)] = nil, false
 }
 
-func (ir *Interpreter) RegisterCallback(name string, cbfunc interface{}) {
+func (ir *interpreter) registerCommand(name string, cbfunc interface{}) {
 	typ := reflect.TypeOf(cbfunc)
 	if typ.Kind() != reflect.Func {
-		panic("RegisterCallback only accepts functions as a second argument")
+		panic("RegisterCommand only accepts functions as a second argument")
 	}
-	ir.callbacks[name] = cbfunc
+	ir.commands[name] = cbfunc
 	cp, cn := _GoStringToCGoString(name)
 	cname := C.CString(name)
-	C._gotk_c_add_callback(ir.C, cname, unsafe.Pointer(ir), cp, cn,
+	C._gotk_c_add_command(ir.C, cname, unsafe.Pointer(ir), cp, cn,
 		_GoInterfacetoCInterface(cbfunc))
 	C.free_string(cname)
 }
 
-func (ir *Interpreter) UnregisterCallback(name string) {
-	if _, ok := ir.callbacks[name]; !ok {
+func (ir *interpreter) unregisterCommand(name string) {
+	if _, ok := ir.commands[name]; !ok {
 		return
 	}
 	cname := C.CString(name)
@@ -486,13 +466,13 @@ func (ir *Interpreter) UnregisterCallback(name string) {
 }
 
 //------------------------------------------------------------------------------
-// Interpreter.Channels
+// interpreter.channels
 //------------------------------------------------------------------------------
 
 //export _gotk_go_channel_handler
 func _gotk_go_channel_handler(clidataup unsafe.Pointer, objc int, objv unsafe.Pointer) int {
 	clidata := (*C.GoTkClientData)(clidataup)
-	ir := (*Interpreter)(clidata.go_interp)
+	ir := (*interpreter)(clidata.go_interp)
 	args := (*(*[alot]*C.Tcl_Obj)(objv))[1:objc]
 	if len(args) != 2 {
 		msg := C.CString("Argument count mismatch, expected two: <- VALUE")
@@ -514,11 +494,11 @@ func _gotk_go_channel_handler(clidataup unsafe.Pointer, objc int, objv unsafe.Po
 //export _gotk_go_channel_deleter
 func _gotk_go_channel_deleter(data unsafe.Pointer) {
 	clidata := (*C.GoTkClientData)(data)
-	ir := (*Interpreter)(clidata.go_interp)
+	ir := (*interpreter)(clidata.go_interp)
 	ir.channels[_CGoStringToGoString(clidata.strp, clidata.strn)] = nil, false
 }
 
-func (ir *Interpreter) RegisterChannel(name string, ch interface{}) {
+func (ir *interpreter) registerChannel(name string, ch interface{}) {
 	typ := reflect.TypeOf(ch)
 	if typ.Kind() != reflect.Chan {
 		panic("RegisterChannel only accepts channels as a second argument")
@@ -532,7 +512,7 @@ func (ir *Interpreter) RegisterChannel(name string, ch interface{}) {
 	C.free_string(cname)
 }
 
-func (ir *Interpreter) UnregisterChannel(name string) {
+func (ir *interpreter) unregisterChannel(name string) {
 	if _, ok := ir.channels[name]; !ok {
 		return
 	}
@@ -545,7 +525,7 @@ func (ir *Interpreter) UnregisterChannel(name string) {
 }
 
 //------------------------------------------------------------------------------
-// Interpreter.Async
+// interpreter.async
 //------------------------------------------------------------------------------
 
 type asyncAction struct {
@@ -554,7 +534,7 @@ type asyncAction struct {
 	arg interface{}
 }
 
-func (ir *Interpreter) Async(action func(), responseChan chan<- interface{}, arg interface{}) {
+func (ir *interpreter) async(action func(), responseChan chan<- interface{}, arg interface{}) {
 	ir.queue <- asyncAction{action, responseChan, arg}
 	ev := C._gotk_c_new_async_event(unsafe.Pointer(ir))
 	C.Tcl_ThreadQueueEvent(ir.thread, ev, C.TCL_QUEUE_TAIL)
@@ -564,9 +544,11 @@ func (ir *Interpreter) Async(action func(), responseChan chan<- interface{}, arg
 //export _gotk_go_async_handler
 func _gotk_go_async_handler(ev unsafe.Pointer, flags int) int {
 	event := (*C.GoTkAsyncEvent)(ev)
-	ir := (*Interpreter)(event.go_interp)
+	ir := (*interpreter)(event.go_interp)
 	action := <-ir.queue
-	action.action()
+	if action.action != nil {
+		action.action()
+	}
 	if action.responseChan != nil {
 		action.responseChan <- action.arg
 	}
@@ -574,20 +556,33 @@ func _gotk_go_async_handler(ev unsafe.Pointer, flags int) int {
 }
 
 //------------------------------------------------------------------------------
-// Interpreter.AsyncEval
+// interpreter.link
 //------------------------------------------------------------------------------
 
-func (ir *Interpreter) AsyncEval(args ...interface{}) {
-	ir.queueEval <- fmt.Sprint(args...)
-	ev := C._gotk_c_new_asynceval_event(unsafe.Pointer(ir))
-	C.Tcl_ThreadQueueEvent(ir.thread, ev, C.TCL_QUEUE_TAIL)
-	C.Tcl_ThreadAlert(ir.thread)
+/*
+func (ir *interpreter) updateLinkedVar(name *C.char) {
+	vl := C._gotk_c_get_link(ir.C, name)
+	linkvar := _CInterfaceToGoInterface(vl.iface).(linkedVar)
 }
 
-//export _gotk_go_asynceval_handler
-func _gotk_go_asynceval_handler(ev unsafe.Pointer, flags int) int {
-	event := (*C.GoTkAsyncEvent)(ev)
-	ir := (*Interpreter)(event.go_interp)
-	ir.Eval(<-ir.queueEval)
-	return 1
+//export _gotk_go_link_trace_handler
+func _gotk_go_link_trace_handler(clidataup, interpup unsafe.Pointer,
+				 name1, name2 *C.char, flags int) *C.char {
+	vl := (*C.GoTkVarLink)(clidataup)
+	interp := (*C.Tcl_Interp)(interpup)
+	linkvar := _CInterfaceToGoInterface(vl.iface).(linkedVar)
+	switch {
+	case flags & C.TCL_TRACE_UNSETS != 0:
+		if C.Tcl_InterpDeleted(interp) != 0 {
+			C.Tcl_DecrRefCount(vl.name)
+			C.free(clidataup)
+		} else if flags & C.TCL_TRACE_DESTROYED != 0 {
+			C._gotk_c_recreate_link_var(interp, vl);
+		}
+
+		return nil
+	case flags & C.TCL_TRACE_WRITES != 0:
+
+	}
 }
+*/

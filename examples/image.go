@@ -19,18 +19,13 @@ func loadPNG(filename string) image.Image {
 }
 
 func main() {
-	img := loadPNG("background.png")
-	ir, err := gothic.NewInterpreter()
-	if err != nil {
-		panic(err)
-	}
-
-	ir.UploadImage("bg", img)
+	ir := gothic.NewInterpreter("")
+	ir.UploadImage("bg", loadPNG("background.png"))
 	ir.Eval(`
 canvas .c -width 640 -height 480 -highlightthickness 0
 .c create image 0 0 -anchor nw -image bg -tags mybg
 .c lower mybg
 pack .c -expand true
 	`)
-	ir.MainLoop()
+	<-ir.Done
 }

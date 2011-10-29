@@ -17,18 +17,17 @@ func dispatcher(c <-chan string) {
 }
 
 func main() {
-	ir, err := gothic.NewInterpreter()
-	if err != nil {
-		panic(err)
-	}
+	ir := gothic.NewInterpreter(`
+ttk::button .b1 -text "Button 1" -command {dispatcher <- button1}
+ttk::button .b2 -text "Button 2" -command {dispatcher <- button2}
+ttk::button .b3 -text "Button 3" -command {dispatcher <- button3}
+pack .b1 .b2 .b3
+	`)
 
 	c := make(chan string)
 	go dispatcher(c)
 
 	ir.RegisterChannel("dispatcher", c)
-	ir.Eval(`ttk::button .b1 -text "Button 1" -command {dispatcher <- button1}`)
-	ir.Eval(`ttk::button .b2 -text "Button 2" -command {dispatcher <- button2}`)
-	ir.Eval(`ttk::button .b3 -text "Button 3" -command {dispatcher <- button3}`)
-	ir.Eval(`pack .b1 .b2 .b3`)
-	ir.MainLoop()
+
+	<-ir.Done
 }

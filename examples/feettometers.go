@@ -4,19 +4,7 @@ import "github.com/nsf/gothic"
 import "strconv"
 
 func main() {
-	ir, err := gothic.NewInterpreter()
-	if err != nil {
-		panic(err)
-	}
-
-	feet := ir.NewStringVar("feet")
-	meters := ir.NewStringVar("meters")
-	ir.RegisterCallback("calculate", func() {
-		f, _ := strconv.Atof64(feet.Get())
-		meters.Set(strconv.Ftoa64(f * 0.3048, 'f', 3))
-	})
-
-	ir.Eval(`
+	ir := gothic.NewInterpreter(`
 wm title . "Feet to Meters"
 grid [ttk::frame .c -padding "3 3 12 12"] -column 0 -row 0 -sticky nwes
 grid columnconfigure . 0 -weight 1; grid rowconfigure . 0 -weight 1
@@ -33,5 +21,11 @@ foreach w [winfo children .c] {grid configure $w -padx 5 -pady 5}
 focus .c.feet
 bind . <Return> {calculate}
 	`)
-	ir.MainLoop()
+
+	ir.RegisterCommand("calculate", func() {
+		f := ir.EvalAsFloat("set feet")
+		ir.Eval("set meters ", strconv.Ftoa64(f * 0.3048, 'f', 3))
+	})
+
+	<-ir.Done
 }
