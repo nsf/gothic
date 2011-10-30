@@ -18,12 +18,13 @@ func loadPNG(filename string) image.Image {
 	return img
 }
 
-func main() {
-	ir := gothic.NewInterpreter("")
+func initGUI(ir *gothic.Interpreter) {
 	ir.UploadImage("bg", loadPNG("background.png"))
-	ir.Eval(`
-ttk::label .l -image bg
-pack .l -expand true
-	`)
+	ir.Eval(`ttk::label .l -image bg`)
+	ir.Eval(`pack .l -expand true`)
+}
+
+func main() {
+	ir := gothic.NewInterpreter(initGUI)
 	<-ir.Done
 }

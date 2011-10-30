@@ -173,28 +173,34 @@ type Interpreter struct {
 	Done <-chan int
 }
 
-func NewInterpreter(init string) *Interpreter {
-	var ir *interpreter
-
+func NewInterpreter(init interface{}) *Interpreter {
 	initdone := make(chan int)
 	done := make(chan int)
+
+	ir := new(Interpreter)
+	ir.Done = done
 
 	go func() {
 		var err os.Error
 		runtime.LockOSThread()
-		ir, err = newInterpreter()
+		ir.ir, err = newInterpreter()
 		if err != nil {
 			panic(err)
 		}
 
-		ir.eval(init)
+		switch realinit := init.(type) {
+		case string:
+			ir.ir.eval(realinit)
+		case func(*Interpreter):
+			realinit(ir)
+		}
 		initdone <- 0
-		ir.mainLoop()
+		ir.ir.mainLoop()
 		done <- 0
 	}()
 
 	<-initdone
-	return &Interpreter{ir, done}
+	return ir
 }
 
 func (ir *Interpreter) Eval(args ...interface{}) {
