@@ -350,7 +350,10 @@ func (ir *interpreter) evalAsInt(args ...interface{}) int {
 	ir.eval(args...)
 
 	var i C.Tcl_WideInt
-	C.Tcl_GetWideIntFromObj(ir.C, C.Tcl_GetObjResult(ir.C), &i)
+	status := C.Tcl_GetWideIntFromObj(ir.C, C.Tcl_GetObjResult(ir.C), &i)
+	if status != C.TCL_OK {
+		fmt.Fprintln(os.Stderr, C.GoString(C.Tcl_GetStringResult(ir.C)))
+	}
 	return int(i)
 }
 
@@ -358,7 +361,10 @@ func (ir *interpreter) evalAsFloat(args ...interface{}) float64 {
 	ir.eval(args...)
 
 	var f C.double
-	C.Tcl_GetDoubleFromObj(ir.C, C.Tcl_GetObjResult(ir.C), &f)
+	status := C.Tcl_GetDoubleFromObj(ir.C, C.Tcl_GetObjResult(ir.C), &f)
+	if status != C.TCL_OK {
+		fmt.Fprintln(os.Stderr, C.GoString(C.Tcl_GetStringResult(ir.C)))
+	}
 	return float64(f)
 }
 
