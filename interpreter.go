@@ -123,7 +123,9 @@ import (
 	"reflect"
 	"runtime"
 	"unsafe"
+	"bytes"
 	"image"
+	"sync"
 	"fmt"
 	"os"
 )
@@ -173,7 +175,8 @@ type Interpreter struct {
 
 func NewInterpreter(init string) *Interpreter {
 	var ir *interpreter
-	initdone := make(chan interface{})
+
+	initdone := make(chan int)
 	done := make(chan int)
 
 	go func() {
@@ -185,7 +188,7 @@ func NewInterpreter(init string) *Interpreter {
 		}
 
 		ir.eval(init)
-		ir.async(nil, initdone, nil)
+		initdone <- 0
 		ir.mainLoop()
 		done <- 0
 	}()
@@ -199,17 +202,17 @@ func (ir *Interpreter) Eval(args ...interface{}) {
 }
 
 func (ir *Interpreter) EvalAsString(args ...interface{}) (out string) {
-	ir.run(func() { out = ir.ir.evalAsString(args...) })
+	ir.runAndWait(func() { out = ir.ir.evalAsString(args...) })
 	return
 }
 
 func (ir *Interpreter) EvalAsInt(args ...interface{}) (out int) {
-	ir.run(func() { out = ir.ir.evalAsInt(args...) })
+	ir.runAndWait(func() { out = ir.ir.evalAsInt(args...) })
 	return
 }
 
 func (ir *Interpreter) EvalAsFloat(args ...interface{}) (out float64) {
-	ir.run(func() { out = ir.ir.evalAsFloat(args...) })
+	ir.runAndWait(func() { out = ir.ir.evalAsFloat(args...) })
 	return
 }
 
@@ -233,6 +236,21 @@ func (ir *Interpreter) UnregisterChannel(name string) {
 	ir.run(func() { ir.ir.unregisterChannel(name) })
 }
 
+func (ir *Interpreter) Sync() {
+	runtime.LockOSThread()
+	if C.Tcl_GetCurrentThread() == ir.ir.thread {
+		return
+	}
+	runtime.UnlockOSThread()
+
+	var m sync.Mutex
+	c := sync.NewCond(&m)
+	m.Lock()
+	ir.ir.async(nil, c)
+	c.Wait()
+	m.Unlock()
+}
+
 func (ir *Interpreter) run(clo func()) {
 	runtime.LockOSThread()
 	if C.Tcl_GetCurrentThread() == ir.ir.thread {
@@ -240,10 +258,23 @@ func (ir *Interpreter) run(clo func()) {
 		return
 	}
 	runtime.UnlockOSThread()
+	ir.ir.async(clo, nil)
+}
 
-	done := make(chan interface{})
-	ir.ir.async(clo, done, nil)
-	<-done
+func (ir *Interpreter) runAndWait(clo func()) {
+	runtime.LockOSThread()
+	if C.Tcl_GetCurrentThread() == ir.ir.thread {
+		clo()
+		return
+	}
+	runtime.UnlockOSThread()
+
+	var m sync.Mutex
+	c := sync.NewCond(&m)
+	m.Lock()
+	ir.ir.async(clo, c)
+	c.Wait()
+	m.Unlock()
 }
 
 //------------------------------------------------------------------------------
@@ -264,6 +295,8 @@ type interpreter struct {
 
 	thread C.Tcl_ThreadId
 	queue chan asyncAction
+
+	cmdbuf bytes.Buffer
 }
 
 func newInterpreter() (*interpreter, os.Error) {
@@ -290,15 +323,16 @@ func newInterpreter() (*interpreter, os.Error) {
 }
 
 func (ir *interpreter) eval(args ...interface{}) {
-	s := fmt.Sprint(args...)
+	ir.cmdbuf.Reset()
+	fmt.Fprint(&ir.cmdbuf, args...)
 
 	if debug {
-		println(s)
+		println(ir.cmdbuf.String())
 	}
 
-	cs := C.CString(s)
-	status := C.Tcl_Eval(ir.C, cs)
-	C.free_string(cs)
+	ir.cmdbuf.WriteByte(0)
+
+	status := C.Tcl_Eval(ir.C, (*C.char)(unsafe.Pointer(&ir.cmdbuf.Bytes()[0])))
 	if status != C.TCL_OK {
 		fmt.Fprintln(os.Stderr, C.GoString(C.Tcl_GetStringResult(ir.C)))
 	}
@@ -529,12 +563,11 @@ func (ir *interpreter) unregisterChannel(name string) {
 
 type asyncAction struct {
 	action func()
-	responseChan chan<- interface{}
-	arg interface{}
+	cond *sync.Cond
 }
 
-func (ir *interpreter) async(action func(), responseChan chan<- interface{}, arg interface{}) {
-	ir.queue <- asyncAction{action, responseChan, arg}
+func (ir *interpreter) async(action func(), cond *sync.Cond) {
+	ir.queue <- asyncAction{action, cond}
 	ev := C._gotk_c_new_async_event(unsafe.Pointer(ir))
 	C.Tcl_ThreadQueueEvent(ir.thread, ev, C.TCL_QUEUE_TAIL)
 	C.Tcl_ThreadAlert(ir.thread)
@@ -548,8 +581,10 @@ func _gotk_go_async_handler(ev unsafe.Pointer, flags int) int {
 	if action.action != nil {
 		action.action()
 	}
-	if action.responseChan != nil {
-		action.responseChan <- action.arg
+	if action.cond != nil {
+		action.cond.L.Lock()
+		action.cond.Signal()
+		action.cond.L.Unlock()
 	}
 	return 1
 }

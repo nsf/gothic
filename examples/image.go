@@ -22,10 +22,8 @@ func main() {
 	ir := gothic.NewInterpreter("")
 	ir.UploadImage("bg", loadPNG("background.png"))
 	ir.Eval(`
-canvas .c -width 640 -height 480 -highlightthickness 0
-.c create image 0 0 -anchor nw -image bg -tags mybg
-.c lower mybg
-pack .c -expand true
+ttk::label .l -image bg
+pack .l -expand true
 	`)
 	<-ir.Done
 }
