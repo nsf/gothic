@@ -120,6 +120,7 @@ static Tcl_Event *_gotk_c_new_async_event(void *go_interp)
 */
 import "C"
 import (
+	"errors"
 	"reflect"
 	"runtime"
 	"unsafe"
@@ -169,7 +170,7 @@ func _GoInterfacetoCInterface(iface interface{}) *unsafe.Pointer {
 //------------------------------------------------------------------------------
 
 type Interpreter struct {
-	ir *interpreter
+	ir   *interpreter
 	Done <-chan int
 }
 
@@ -181,7 +182,7 @@ func NewInterpreter(init interface{}) *Interpreter {
 	ir.Done = done
 
 	go func() {
-		var err os.Error
+		var err error
 		runtime.LockOSThread()
 		ir.ir, err = newInterpreter()
 		if err != nil {
@@ -300,29 +301,29 @@ type interpreter struct {
 	valuesbuf []reflect.Value
 
 	thread C.Tcl_ThreadId
-	queue chan asyncAction
+	queue  chan asyncAction
 
 	cmdbuf bytes.Buffer
 }
 
-func newInterpreter() (*interpreter, os.Error) {
+func newInterpreter() (*interpreter, error) {
 	ir := &interpreter{
-		C: C.Tcl_CreateInterp(),
-		commands: make(map[string]interface{}),
-		channels: make(map[string]interface{}),
+		C:         C.Tcl_CreateInterp(),
+		commands:  make(map[string]interface{}),
+		channels:  make(map[string]interface{}),
 		valuesbuf: make([]reflect.Value, 0, 10),
-		queue: make(chan asyncAction, 50),
-		thread: C.Tcl_GetCurrentThread(),
+		queue:     make(chan asyncAction, 50),
+		thread:    C.Tcl_GetCurrentThread(),
 	}
 
 	status := C.Tcl_Init(ir.C)
 	if status != C.TCL_OK {
-		return nil, os.NewError(C.GoString(C.Tcl_GetStringResult(ir.C)))
+		return nil, errors.New(C.GoString(C.Tcl_GetStringResult(ir.C)))
 	}
 
 	status = C.Tk_Init(ir.C)
 	if status != C.TCL_OK {
-		return nil, os.NewError(C.GoString(C.Tcl_GetStringResult(ir.C)))
+		return nil, errors.New(C.GoString(C.Tcl_GetStringResult(ir.C)))
 	}
 
 	return ir, nil
@@ -482,7 +483,7 @@ func _gotk_go_command_handler(clidataup unsafe.Pointer, objc int, objv unsafe.Po
 func _gotk_go_command_deleter(data unsafe.Pointer) {
 	clidata := (*C.GoTkClientData)(data)
 	ir := (*interpreter)(clidata.go_interp)
-	ir.commands[_CGoStringToGoString(clidata.strp, clidata.strn)] = nil, false
+	delete(ir.commands, _CGoStringToGoString(clidata.strp, clidata.strn))
 }
 
 func (ir *interpreter) registerCommand(name string, cbfunc interface{}) {
@@ -540,7 +541,7 @@ func _gotk_go_channel_handler(clidataup unsafe.Pointer, objc int, objv unsafe.Po
 func _gotk_go_channel_deleter(data unsafe.Pointer) {
 	clidata := (*C.GoTkClientData)(data)
 	ir := (*interpreter)(clidata.go_interp)
-	ir.channels[_CGoStringToGoString(clidata.strp, clidata.strn)] = nil, false
+	delete(ir.channels, _CGoStringToGoString(clidata.strp, clidata.strn))
 }
 
 func (ir *interpreter) registerChannel(name string, ch interface{}) {
@@ -575,7 +576,7 @@ func (ir *interpreter) unregisterChannel(name string) {
 
 type asyncAction struct {
 	action func()
-	cond *sync.Cond
+	cond   *sync.Cond
 }
 
 func (ir *interpreter) async(action func(), cond *sync.Cond) {
