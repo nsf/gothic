@@ -24,7 +24,7 @@ bind . <Return> {calculate}
 
 	ir.RegisterCommand("calculate", func() {
 		f := ir.EvalAsFloat("set feet")
-		ir.Eval("set meters ", strconv.Ftoa64(f * 0.3048, 'f', 3))
+		ir.Eval("set meters ", strconv.FormatFloat(f * 0.3048, 'f', 3, 64))
 	})
 
 	<-ir.Done

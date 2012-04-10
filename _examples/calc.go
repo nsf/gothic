@@ -1,7 +1,7 @@
 package main
 
 import "github.com/nsf/gothic"
-import "big"
+import "math/big"
 
 var args [2]*big.Int
 var lastOp string

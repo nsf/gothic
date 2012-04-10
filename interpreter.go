@@ -4,119 +4,7 @@ package gothic
 #cgo LDFLAGS: -ltcl8.5 -ltk8.5
 #cgo CFLAGS: -I/usr/include/tcl8.5
 
-#include <stdlib.h>
-#include <tcl.h>
-#include <tk.h>
-
-typedef struct {
-	void *go_interp; // go tcl/tk interpreter
-	char *strp;      // go string ptr
-	int strn;        // go string len
-	void *iface[2];  // go interface
-} GoTkClientData;
-
-static inline void free_string(char *s)
-{
-	free(s);
-}
-
-static inline void _gotk_c_tcl_set_result(Tcl_Interp *interp, char *result)
-{
-	Tcl_SetResult(interp, result, free_string);
-}
-
-static inline GoTkClientData *_gotk_c_client_data_new(
-	void *go_interp,
-	char *strp,
-	int strn,
-	void **iface)
-{
-	GoTkClientData *cd = malloc(sizeof(GoTkClientData));
-	cd->go_interp = go_interp;
-	cd->strp = strp;
-	cd->strn = strn;
-	cd->iface[0] = iface[0];
-	cd->iface[1] = iface[1];
-	return cd;
-}
-
-//------------------------------------------------------------------------------
-// Command
-//------------------------------------------------------------------------------
-
-extern int _gotk_go_command_handler(GoTkClientData*, int, Tcl_Obj**);
-extern void _gotk_go_command_deleter(GoTkClientData*);
-
-static int _gotk_c_command_handler(ClientData cd, Tcl_Interp *interp,
-				    int objc, Tcl_Obj *CONST objv[])
-{
-	return _gotk_go_command_handler((GoTkClientData*)cd, objc, (Tcl_Obj**)objv);
-}
-
-static void _gotk_c_command_deleter(ClientData cd)
-{
-	GoTkClientData *clidata = (GoTkClientData*)cd;
-	_gotk_go_command_deleter(clidata);
-	free(cd);
-}
-
-static void _gotk_c_add_command(Tcl_Interp *interp, const char *name,
-				void *go_interp, char *strp, int strn,
-				void **iface)
-{
-	GoTkClientData *cd = _gotk_c_client_data_new(go_interp, strp, strn, iface);
-	Tcl_CreateObjCommand(interp, name, _gotk_c_command_handler,
-			     (ClientData)cd, _gotk_c_command_deleter);
-}
-
-//------------------------------------------------------------------------------
-// Channel
-//------------------------------------------------------------------------------
-
-extern int _gotk_go_channel_handler(GoTkClientData*, int, Tcl_Obj**);
-extern void _gotk_go_channel_deleter(GoTkClientData*);
-
-static int _gotk_c_channel_handler(ClientData cd, Tcl_Interp *interp,
-				   int objc, Tcl_Obj *CONST objv[])
-{
-	return _gotk_go_channel_handler((GoTkClientData*)cd, objc, (Tcl_Obj**)objv);
-}
-
-static void _gotk_c_channel_deleter(ClientData cd)
-{
-	GoTkClientData *clidata = (GoTkClientData*)cd;
-	_gotk_go_channel_deleter(clidata);
-	free(cd);
-}
-
-static void _gotk_c_add_channel(Tcl_Interp *interp, const char *name,
-				void *go_interp, char *strp, int strn,
-				void **iface)
-{
-	GoTkClientData *cd = _gotk_c_client_data_new(go_interp, strp, strn, iface);
-	Tcl_CreateObjCommand(interp, name, _gotk_c_channel_handler,
-			     (ClientData)cd, _gotk_c_channel_deleter);
-}
-
-//------------------------------------------------------------------------------
-// Async
-//------------------------------------------------------------------------------
-
-typedef struct {
-	Tcl_Event header;
-	void *go_interp;
-} GoTkAsyncEvent;
-
-extern int _gotk_go_async_handler(Tcl_Event*, int);
-
-static Tcl_Event *_gotk_c_new_async_event(void *go_interp)
-{
-	GoTkAsyncEvent *ev = (GoTkAsyncEvent*)Tcl_Alloc(sizeof(GoTkAsyncEvent));
-	ev->header.proc = _gotk_go_async_handler;
-	ev->header.nextPtr = 0;
-	ev->go_interp = go_interp;
-	return (Tcl_Event*)ev;
-}
+#include "interpreter.h"
 */
 import "C"
 import (
@@ -401,7 +289,7 @@ func (ir *interpreter) uploadImage(name string, img image.Image) {
 			panic("something terrible has happened")
 		}
 	}
-	C.free_string(cname)
+	C.free(unsafe.Pointer(cname))
 	block := C.Tk_PhotoImageBlock{
 		(*C.uchar)(unsafe.Pointer(&nrgba.Pix[0])),
 		C.int(nrgba.Rect.Max.X),
@@ -496,7 +384,7 @@ func (ir *interpreter) registerCommand(name string, cbfunc interface{}) {
 	cname := C.CString(name)
 	C._gotk_c_add_command(ir.C, cname, unsafe.Pointer(ir), cp, cn,
 		_GoInterfacetoCInterface(cbfunc))
-	C.free_string(cname)
+	C.free(unsafe.Pointer(cname))
 }
 
 func (ir *interpreter) unregisterCommand(name string) {
@@ -505,7 +393,7 @@ func (ir *interpreter) unregisterCommand(name string) {
 	}
 	cname := C.CString(name)
 	status := C.Tcl_DeleteCommand(ir.C, cname)
-	C.free_string(cname)
+	C.free(unsafe.Pointer(cname))
 	if status != C.TCL_OK {
 		panic(C.GoString(C.Tcl_GetStringResult(ir.C)))
 	}
@@ -555,7 +443,7 @@ func (ir *interpreter) registerChannel(name string, ch interface{}) {
 	cname := C.CString(name)
 	C._gotk_c_add_channel(ir.C, cname, unsafe.Pointer(ir), cp, cn,
 		_GoInterfacetoCInterface(ch))
-	C.free_string(cname)
+	C.free(unsafe.Pointer(cname))
 }
 
 func (ir *interpreter) unregisterChannel(name string) {
@@ -564,7 +452,7 @@ func (ir *interpreter) unregisterChannel(name string) {
 	}
 	cname := C.CString(name)
 	status := C.Tcl_DeleteCommand(ir.C, cname)
-	C.free_string(cname)
+	C.free(unsafe.Pointer(cname))
 	if status != C.TCL_OK {
 		panic(C.GoString(C.Tcl_GetStringResult(ir.C)))
 	}
