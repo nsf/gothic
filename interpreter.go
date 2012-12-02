@@ -123,14 +123,6 @@ func (ir *Interpreter) UnregisterCommand(name string) {
 	ir.run(func() { ir.ir.unregisterCommand(name) })
 }
 
-func (ir *Interpreter) RegisterChannel(name string, ch interface{}) {
-	ir.run(func() { ir.ir.registerChannel(name, ch) })
-}
-
-func (ir *Interpreter) UnregisterChannel(name string) {
-	ir.run(func() { ir.ir.unregisterChannel(name) })
-}
-
 func (ir *Interpreter) Sync() {
 	runtime.LockOSThread()
 	if C.Tcl_GetCurrentThread() == ir.ir.thread {
@@ -389,65 +381,6 @@ func (ir *interpreter) registerCommand(name string, cbfunc interface{}) {
 
 func (ir *interpreter) unregisterCommand(name string) {
 	if _, ok := ir.commands[name]; !ok {
-		return
-	}
-	cname := C.CString(name)
-	status := C.Tcl_DeleteCommand(ir.C, cname)
-	C.free(unsafe.Pointer(cname))
-	if status != C.TCL_OK {
-		panic(C.GoString(C.Tcl_GetStringResult(ir.C)))
-	}
-}
-
-//------------------------------------------------------------------------------
-// interpreter.channels
-//------------------------------------------------------------------------------
-
-//export _gotk_go_channel_handler
-func _gotk_go_channel_handler(clidataup unsafe.Pointer, objc int, objv unsafe.Pointer) int {
-	clidata := (*C.GoTkClientData)(clidataup)
-	ir := (*interpreter)(clidata.go_interp)
-	args := (*(*[alot]*C.Tcl_Obj)(objv))[1:objc]
-	if len(args) != 2 {
-		msg := C.CString("Argument count mismatch, expected two: <- VALUE")
-		C._gotk_c_tcl_set_result(ir.C, msg)
-		return C.TCL_ERROR
-	}
-
-	ch := _CInterfaceToGoInterface(clidata.iface)
-	val := reflect.ValueOf(ch)
-	arg, status := ir.tclObjToGoValue(args[1], val.Type().Elem())
-	if status != C.TCL_OK {
-		return C.TCL_ERROR
-	}
-
-	val.Send(arg)
-	return C.TCL_OK
-}
-
-//export _gotk_go_channel_deleter
-func _gotk_go_channel_deleter(data unsafe.Pointer) {
-	clidata := (*C.GoTkClientData)(data)
-	ir := (*interpreter)(clidata.go_interp)
-	delete(ir.channels, _CGoStringToGoString(clidata.strp, clidata.strn))
-}
-
-func (ir *interpreter) registerChannel(name string, ch interface{}) {
-	typ := reflect.TypeOf(ch)
-	if typ.Kind() != reflect.Chan {
-		panic("RegisterChannel only accepts channels as a second argument")
-	}
-
-	ir.channels[name] = ch
-	cp, cn := _GoStringToCGoString(name)
-	cname := C.CString(name)
-	C._gotk_c_add_channel(ir.C, cname, unsafe.Pointer(ir), cp, cn,
-		_GoInterfacetoCInterface(ch))
-	C.free(unsafe.Pointer(cname))
-}
-
-func (ir *interpreter) unregisterChannel(name string) {
-	if _, ok := ir.channels[name]; !ok {
 		return
 	}
 	cname := C.CString(name)

@@ -23,15 +23,6 @@ void _gotk_c_add_command(Tcl_Interp *interp, const char *name, void *go_interp,
 	char *strp, int strn, void **iface);
 
 //------------------------------------------------------------------------------
-// Channel
-//------------------------------------------------------------------------------
-
-int _gotk_c_channel_handler(ClientData cd, Tcl_Interp *interp, int objc, Tcl_Obj *CONST objv[]);
-void _gotk_c_channel_deleter(ClientData cd);
-void _gotk_c_add_channel(Tcl_Interp *interp, const char *name, void *go_interp,
-	char *strp, int strn, void **iface);
-
-//------------------------------------------------------------------------------
 // Async
 //------------------------------------------------------------------------------
 

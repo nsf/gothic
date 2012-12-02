@@ -26,8 +26,6 @@ func (*Interpreter) EvalAsFloat(args ...interface{}) float64
 func (*Interpreter) UploadImage(name string, img image.Image)
 func (*Interpreter) RegisterCommand(name string, cbfunc interface{})
 func (*Interpreter) UnregisterCommand(name string)
-func (*Interpreter) RegisterChannel(name string, ch interface{})
-func (*Interpreter) UnregisterChannel(name string)
 func (*Interpreter) Sync()
 
 As it was stated before, the "Interpreter" is being executed in a separate

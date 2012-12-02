@@ -45,31 +45,6 @@ void _gotk_c_add_command(Tcl_Interp *interp, const char *name, void *go_interp,
 }
 
 //------------------------------------------------------------------------------
-// Channel
-//------------------------------------------------------------------------------
-
-extern int _gotk_go_channel_handler(GoTkClientData*, int, Tcl_Obj**);
-extern void _gotk_go_channel_deleter(GoTkClientData*);
-
-int _gotk_c_channel_handler(ClientData cd, Tcl_Interp *interp, int objc, Tcl_Obj *CONST objv[]) {
-	return _gotk_go_channel_handler((GoTkClientData*)cd, objc, (Tcl_Obj**)objv);
-}
-
-void _gotk_c_channel_deleter(ClientData cd) {
-	GoTkClientData *clidata = (GoTkClientData*)cd;
-	_gotk_go_channel_deleter(clidata);
-	free(cd);
-}
-
-void _gotk_c_add_channel(Tcl_Interp *interp, const char *name, void *go_interp,
-	char *strp, int strn, void **iface)
-{
-	GoTkClientData *cd = _gotk_c_client_data_new(go_interp, strp, strn, iface);
-	Tcl_CreateObjCommand(interp, name, _gotk_c_channel_handler,
-			     (ClientData)cd, _gotk_c_channel_deleter);
-}
-
-//------------------------------------------------------------------------------
 // Async
 //------------------------------------------------------------------------------
 

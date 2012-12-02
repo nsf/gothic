@@ -10,7 +10,9 @@ func proc(ir *gothic.Interpreter, num string) {
 	recv := make(chan int)
 
 	// register channel and enable button
-	ir.RegisterChannel(channame, recv)
+	ir.RegisterCommand(channame, func(_ string, arg int){
+		recv <- arg
+	})
 	ir.Eval(button, ` configure -state normal`)
 
 	for {

@@ -27,7 +27,9 @@ pack .b1 .b2 .b3
 	c := make(chan string)
 	go dispatcher(c)
 
-	ir.RegisterChannel("dispatcher", c)
+	ir.RegisterCommand("dispatcher", func(_, arg string) {
+		c <- arg
+	})
 
 	<-ir.Done
 }
