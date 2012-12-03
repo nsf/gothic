@@ -124,11 +124,9 @@ func (ir *Interpreter) UnregisterCommand(name string) {
 }
 
 func (ir *Interpreter) Sync() {
-	runtime.LockOSThread()
 	if C.Tcl_GetCurrentThread() == ir.ir.thread {
 		return
 	}
-	runtime.UnlockOSThread()
 
 	var m sync.Mutex
 	c := sync.NewCond(&m)
@@ -139,22 +137,18 @@ func (ir *Interpreter) Sync() {
 }
 
 func (ir *Interpreter) run(clo func()) {
-	runtime.LockOSThread()
 	if C.Tcl_GetCurrentThread() == ir.ir.thread {
 		clo()
 		return
 	}
-	runtime.UnlockOSThread()
 	ir.ir.async(clo, nil)
 }
 
 func (ir *Interpreter) runAndWait(clo func()) {
-	runtime.LockOSThread()
 	if C.Tcl_GetCurrentThread() == ir.ir.thread {
 		clo()
 		return
 	}
-	runtime.UnlockOSThread()
 
 	var m sync.Mutex
 	c := sync.NewCond(&m)
