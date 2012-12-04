@@ -21,6 +21,7 @@ Here are the methods of the "Interpreter":
 
 func (*Interpreter) Eval(args ...interface{}) error
 func (*Interpreter) EvalAs(out interface{}, args ...interface{}) error
+func (*Interpreter) Set(name string, val interface{}) error
 func (*Interpreter) UploadImage(name string, img image.Image) error
 func (*Interpreter) RegisterCommand(name string, cbfunc interface{}) error
 func (*Interpreter) UnregisterCommand(name string) error
