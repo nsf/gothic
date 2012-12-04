@@ -77,6 +77,7 @@ func NewInterpreter(init interface{}) *Interpreter {
 		case func(*Interpreter):
 			realinit(ir)
 		}
+
 		initdone <- 0
 		C.Tk_MainLoop()
 		done <- 0
@@ -88,55 +89,65 @@ func NewInterpreter(init interface{}) *Interpreter {
 
 func (ir *Interpreter) Eval(args ...interface{}) error {
 	if C.Tcl_GetCurrentThread() == ir.ir.thread {
-		return ir.ir.eval(args...)
+		return ir.ir.filt(ir.ir.eval(args...))
 	}
 	return ir.ir.run_and_wait(func() error {
-		return ir.ir.eval(args...)
+		return ir.ir.filt(ir.ir.eval(args...))
 	})
 }
 
 func (ir *Interpreter) EvalAs(out interface{}, args ...interface{}) error {
 	if C.Tcl_GetCurrentThread() == ir.ir.thread {
-		return ir.ir.eval_as(out, args...)
+		return ir.ir.filt(ir.ir.eval_as(out, args...))
 	}
 	return ir.ir.run_and_wait(func() error {
-		return ir.ir.eval_as(out, args...)
+		return ir.ir.filt(ir.ir.eval_as(out, args...))
 	})
 }
 
 func (ir *Interpreter) Set(name string, val interface{}) error {
 	if C.Tcl_GetCurrentThread() == ir.ir.thread {
-		return ir.ir.set(name, val)
+		return ir.ir.filt(ir.ir.set(name, val))
 	}
 	return ir.ir.run_and_wait(func() error {
-		return ir.ir.set(name, val)
+		return ir.ir.filt(ir.ir.set(name, val))
+	})
+}
+
+func (ir *Interpreter) ErrorFilter(filt func(error)error) {
+	if C.Tcl_GetCurrentThread() == ir.ir.thread {
+		ir.ir.errfilt = filt
+	}
+	ir.ir.run_and_wait(func() error {
+		ir.ir.errfilt = filt
+		return nil
 	})
 }
 
 func (ir *Interpreter) UploadImage(name string, img image.Image) error {
 	if C.Tcl_GetCurrentThread() == ir.ir.thread {
-		return ir.ir.upload_image(name, img)
+		return ir.ir.filt(ir.ir.upload_image(name, img))
 	}
 	return ir.ir.run_and_wait(func() error {
-		return ir.ir.upload_image(name, img)
+		return ir.ir.filt(ir.ir.upload_image(name, img))
 	})
 }
 
 func (ir *Interpreter) RegisterCommand(name string, cbfunc interface{}) error {
 	if C.Tcl_GetCurrentThread() == ir.ir.thread {
-		return ir.ir.register_command(name, cbfunc)
+		return ir.ir.filt(ir.ir.register_command(name, cbfunc))
 	}
 	return ir.ir.run_and_wait(func() error {
-		return ir.ir.register_command(name, cbfunc)
+		return ir.ir.filt(ir.ir.register_command(name, cbfunc))
 	})
 }
 
 func (ir *Interpreter) UnregisterCommand(name string) error {
 	if C.Tcl_GetCurrentThread() == ir.ir.thread {
-		return ir.ir.unregister_command(name)
+		return ir.ir.filt(ir.ir.unregister_command(name))
 	}
 	return ir.ir.run_and_wait(func() error {
-		return ir.ir.unregister_command(name)
+		return ir.ir.filt(ir.ir.unregister_command(name))
 	})
 }
 
@@ -146,6 +157,8 @@ func (ir *Interpreter) UnregisterCommand(name string) error {
 
 type interpreter struct {
 	C *C.Tcl_Interp
+
+	errfilt func(error) error
 
 	// registered commands
 	commands map[string]interface{}
@@ -164,6 +177,7 @@ type interpreter struct {
 func new_interpreter() (*interpreter, error) {
 	ir := &interpreter{
 		C:         C.Tcl_CreateInterp(),
+		errfilt:   func(err error) error { return err },
 		commands:  make(map[string]interface{}),
 		channels:  make(map[string]interface{}),
 		valuesbuf: make([]reflect.Value, 0, 10),
@@ -182,6 +196,16 @@ func new_interpreter() (*interpreter, error) {
 	}
 
 	return ir, nil
+}
+
+func (ir *interpreter) filt(err error) error {
+	errfilt := ir.errfilt
+	ir.errfilt = nil
+	if errfilt != nil {
+		err = errfilt(err)
+	}
+	ir.errfilt = errfilt
+	return err
 }
 
 func (ir *interpreter) eval(args ...interface{}) error {
@@ -442,6 +466,9 @@ func (ir *interpreter) run_and_wait(action func() error) (err error) {
 
 //export _gotk_go_async_handler
 func _gotk_go_async_handler(ev unsafe.Pointer, flags int) int {
+	if flags != C.TK_ALL_EVENTS {
+		return 0
+	}
 	event := (*C.GoTkAsyncEvent)(ev)
 	ir := (*interpreter)(event.go_interp)
 	action := <-ir.queue

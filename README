@@ -19,6 +19,7 @@ gets executed the same way as the string, that is - before Tk's main loop.
 
 Here are the methods of the "Interpreter":
 
+func (*Interpreter) ErrorFilter(filt func(error) error)
 func (*Interpreter) Eval(args ...interface{}) error
 func (*Interpreter) EvalAs(out interface{}, args ...interface{}) error
 func (*Interpreter) Set(name string, val interface{}) error
