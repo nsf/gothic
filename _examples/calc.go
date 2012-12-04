@@ -8,7 +8,8 @@ var lastOp string
 var afterOp = true
 
 func applyOp(op string, ir *gothic.Interpreter) {
-	num := ir.EvalAsString("set calcText")
+	var num string
+	ir.EvalAs(&num, "set calcText")
 	if args[0] == nil {
 		if op != "=" {
 			args[0] = big.NewInt(0)
@@ -144,7 +145,8 @@ bind . <BackSpace>   { clearAll }
 	})
 
 	ir.RegisterCommand("plusMinus", func() {
-		text := ir.EvalAsString("set calcText")
+		var text string
+		ir.EvalAs(&text, "set calcText")
 		if len(text) == 0 || text[0] == '0' {
 			return
 		}

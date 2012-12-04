@@ -19,29 +19,15 @@ gets executed the same way as the string, that is - before Tk's main loop.
 
 Here are the methods of the "Interpreter":
 
-func (*Interpreter) Eval(args ...interface{})
-func (*Interpreter) EvalAsString(args ...interface{}) string
-func (*Interpreter) EvalAsInt(args ...interface{}) int
-func (*Interpreter) EvalAsFloat(args ...interface{}) float64
-func (*Interpreter) UploadImage(name string, img image.Image)
-func (*Interpreter) RegisterCommand(name string, cbfunc interface{})
-func (*Interpreter) UnregisterCommand(name string)
-func (*Interpreter) Sync()
+func (*Interpreter) Eval(args ...interface{}) error
+func (*Interpreter) EvalAs(out interface{}, args ...interface{}) error
+func (*Interpreter) UploadImage(name string, img image.Image) error
+func (*Interpreter) RegisterCommand(name string, cbfunc interface{}) error
+func (*Interpreter) UnregisterCommand(name string) error
 
 As it was stated before, the "Interpreter" is being executed in a separate
-goroutine and each method is completely thread-safe. Also every method that
-doesn't return anything is asynchronous (except Sync). Basically it puts the
-method and its args to the interpreter's queue and at some point in future the
-method will be executed. If you call method A and then method B, method A will
-be always executed before method B, but both methods will be executed at some
-point in future.
-
-You can explicitly wait for a completion of all previously queued calls by
-using the Sync method.
-
-There is an exception however, each method acts synchronously in case if it's
-executed in the interpreter's thread. It may happen for example when you pass
-an initialization function to the "NewInterpreter" or if you do method calls in
-a registered tcl command that was called from an interpreter.
+goroutine and each method is completely thread-safe. Also every method is
+synchronous. It will queue commands for execution and wait for their
+completion.
 
 That's it. See "examples" directory it has the use cases for most of the API.

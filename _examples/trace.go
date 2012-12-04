@@ -12,7 +12,9 @@ pack .e -fill x -expand true
 	`)
 
 	ir.RegisterCommand("go::onchange", func() {
-		fmt.Println(ir.EvalAsString("set go::etext"))
+		var s string
+		ir.EvalAs(&s, "set go::etext")
+		fmt.Println(s)
 	})
 	<-ir.Done
 }

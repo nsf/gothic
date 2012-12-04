@@ -16,7 +16,6 @@ import (
 	"image"
 	"sync"
 	"fmt"
-	"os"
 )
 
 const (
@@ -28,35 +27,30 @@ const (
 // Utils
 //------------------------------------------------------------------------------
 
-func _CGoStringToGoString(p *C.char, n C.int) string {
+func cgo_string_to_go_string(p *C.char, n C.int) string {
 	var x reflect.StringHeader
 	x.Data = uintptr(unsafe.Pointer(p))
 	x.Len = int(n)
 	return *(*string)(unsafe.Pointer(&x))
 }
 
-func _GoStringToCGoString(s string) (*C.char, C.int) {
+func go_string_to_cgo_string(s string) (*C.char, C.int) {
 	x := *(*reflect.StringHeader)(unsafe.Pointer(&s))
 	return (*C.char)(unsafe.Pointer(x.Data)), C.int(x.Len)
 }
 
-func _CInterfaceToGoInterface(iface [2]unsafe.Pointer) interface{} {
+func c_interface_to_go_interface(iface [2]unsafe.Pointer) interface{} {
 	return *(*interface{})(unsafe.Pointer(&iface))
 }
 
-func _GoInterfacetoCInterface(iface interface{}) *unsafe.Pointer {
+func go_interface_to_c_interface(iface interface{}) *unsafe.Pointer {
 	return (*unsafe.Pointer)(unsafe.Pointer(&iface))
 }
 
-//------------------------------------------------------------------------------
-// Interpreter
-//
-// A handle that is used to manipulate interpreter. All handle methods can be
-// safely invoked from different threads. Each method invokation is
-// synchornous, it means that the method will be blocked until the action is
-// executed.
-//------------------------------------------------------------------------------
-
+// A handle that is used to manipulate a TCL interpreter. All handle methods
+// can be safely invoked from different threads. Each method invokation is
+// synchronous, it means that the method will be blocked until the action is
+// actually executed.
 type Interpreter struct {
 	ir   *interpreter
 	Done <-chan int
@@ -72,7 +66,7 @@ func NewInterpreter(init interface{}) *Interpreter {
 	go func() {
 		var err error
 		runtime.LockOSThread()
-		ir.ir, err = newInterpreter()
+		ir.ir, err = new_interpreter()
 		if err != nil {
 			panic(err)
 		}
@@ -84,7 +78,7 @@ func NewInterpreter(init interface{}) *Interpreter {
 			realinit(ir)
 		}
 		initdone <- 0
-		ir.ir.mainLoop()
+		C.Tk_MainLoop()
 		done <- 0
 	}()
 
@@ -92,70 +86,58 @@ func NewInterpreter(init interface{}) *Interpreter {
 	return ir
 }
 
-func (ir *Interpreter) Eval(args ...interface{}) {
-	ir.run(func() { ir.ir.eval(args...) })
-}
-
-func (ir *Interpreter) EvalAsString(args ...interface{}) (out string) {
-	ir.runAndWait(func() { out = ir.ir.evalAsString(args...) })
-	return
-}
-
-func (ir *Interpreter) EvalAsInt(args ...interface{}) (out int) {
-	ir.runAndWait(func() { out = ir.ir.evalAsInt(args...) })
-	return
-}
-
-func (ir *Interpreter) EvalAsFloat(args ...interface{}) (out float64) {
-	ir.runAndWait(func() { out = ir.ir.evalAsFloat(args...) })
-	return
-}
-
-func (ir *Interpreter) UploadImage(name string, img image.Image) {
-	ir.run(func() { ir.ir.uploadImage(name, img) })
-}
-
-func (ir *Interpreter) RegisterCommand(name string, cbfunc interface{}) {
-	ir.run(func() { ir.ir.registerCommand(name, cbfunc) })
-}
-
-func (ir *Interpreter) UnregisterCommand(name string) {
-	ir.run(func() { ir.ir.unregisterCommand(name) })
-}
-
-func (ir *Interpreter) Sync() {
+func (ir *Interpreter) Eval(args ...interface{}) error {
 	if C.Tcl_GetCurrentThread() == ir.ir.thread {
-		return
+		return ir.ir.eval(args...)
 	}
-
-	var m sync.Mutex
-	c := sync.NewCond(&m)
-	m.Lock()
-	ir.ir.async(nil, c)
-	c.Wait()
-	m.Unlock()
+	return ir.ir.run_and_wait(func() error {
+		return ir.ir.eval(args...)
+	})
 }
 
-func (ir *Interpreter) run(clo func()) {
+func (ir *Interpreter) EvalAs(out interface{}, args ...interface{}) error {
 	if C.Tcl_GetCurrentThread() == ir.ir.thread {
-		clo()
-		return
+		return ir.ir.eval_as(out, args...)
 	}
-	ir.ir.async(clo, nil)
+	return ir.ir.run_and_wait(func() error {
+		return ir.ir.eval_as(out, args...)
+	})
 }
 
-func (ir *Interpreter) runAndWait(clo func()) {
+func (ir *Interpreter) Set(name string, val interface{}) error {
 	if C.Tcl_GetCurrentThread() == ir.ir.thread {
-		clo()
-		return
+		return ir.ir.set(name, val)
 	}
+	return ir.ir.run_and_wait(func() error {
+		return ir.ir.set(name, val)
+	})
+}
 
-	var m sync.Mutex
-	c := sync.NewCond(&m)
-	m.Lock()
-	ir.ir.async(clo, c)
-	c.Wait()
-	m.Unlock()
+func (ir *Interpreter) UploadImage(name string, img image.Image) error {
+	if C.Tcl_GetCurrentThread() == ir.ir.thread {
+		return ir.ir.upload_image(name, img)
+	}
+	return ir.ir.run_and_wait(func() error {
+		return ir.ir.upload_image(name, img)
+	})
+}
+
+func (ir *Interpreter) RegisterCommand(name string, cbfunc interface{}) error {
+	if C.Tcl_GetCurrentThread() == ir.ir.thread {
+		return ir.ir.register_command(name, cbfunc)
+	}
+	return ir.ir.run_and_wait(func() error {
+		return ir.ir.register_command(name, cbfunc)
+	})
+}
+
+func (ir *Interpreter) UnregisterCommand(name string) error {
+	if C.Tcl_GetCurrentThread() == ir.ir.thread {
+		return ir.ir.unregister_command(name)
+	}
+	return ir.ir.run_and_wait(func() error {
+		return ir.ir.unregister_command(name)
+	})
 }
 
 //------------------------------------------------------------------------------
@@ -175,18 +157,17 @@ type interpreter struct {
 	valuesbuf []reflect.Value
 
 	thread C.Tcl_ThreadId
-	queue  chan asyncAction
-
+	queue  chan async_action
 	cmdbuf bytes.Buffer
 }
 
-func newInterpreter() (*interpreter, error) {
+func new_interpreter() (*interpreter, error) {
 	ir := &interpreter{
 		C:         C.Tcl_CreateInterp(),
 		commands:  make(map[string]interface{}),
 		channels:  make(map[string]interface{}),
 		valuesbuf: make([]reflect.Value, 0, 10),
-		queue:     make(chan asyncAction, 50),
+		queue:     make(chan async_action, 50),
 		thread:    C.Tcl_GetCurrentThread(),
 	}
 
@@ -203,57 +184,71 @@ func newInterpreter() (*interpreter, error) {
 	return ir, nil
 }
 
-func (ir *interpreter) eval(args ...interface{}) {
+func (ir *interpreter) eval(args ...interface{}) error {
 	ir.cmdbuf.Reset()
 	fmt.Fprint(&ir.cmdbuf, args...)
-
-	if debug {
-		println(ir.cmdbuf.String())
-	}
-
 	ir.cmdbuf.WriteByte(0)
 
 	status := C.Tcl_Eval(ir.C, (*C.char)(unsafe.Pointer(&ir.cmdbuf.Bytes()[0])))
 	if status != C.TCL_OK {
-		fmt.Fprintln(os.Stderr, C.GoString(C.Tcl_GetStringResult(ir.C)))
+		return errors.New(C.GoString(C.Tcl_GetStringResult(ir.C)))
 	}
+	return nil
 }
 
-func (ir *interpreter) evalAsString(args ...interface{}) string {
-	ir.eval(args...)
-
-	var n C.int
-	str := C.Tcl_GetStringFromObj(C.Tcl_GetObjResult(ir.C), &n)
-	return C.GoStringN(str, n)
-}
-
-func (ir *interpreter) evalAsInt(args ...interface{}) int {
-	ir.eval(args...)
-
-	var i C.Tcl_WideInt
-	status := C.Tcl_GetWideIntFromObj(ir.C, C.Tcl_GetObjResult(ir.C), &i)
-	if status != C.TCL_OK {
-		fmt.Fprintln(os.Stderr, C.GoString(C.Tcl_GetStringResult(ir.C)))
+func (ir *interpreter) eval_as(out interface{}, args ...interface{}) error {
+	pv := reflect.ValueOf(out)
+	if pv.Kind() != reflect.Ptr || pv.IsNil() {
+		panic("gothic: EvalAs expected a non-nil pointer argument")
 	}
-	return int(i)
-}
+	v := pv.Elem()
 
-func (ir *interpreter) evalAsFloat(args ...interface{}) float64 {
-	ir.eval(args...)
-
-	var f C.double
-	status := C.Tcl_GetDoubleFromObj(ir.C, C.Tcl_GetObjResult(ir.C), &f)
-	if status != C.TCL_OK {
-		fmt.Fprintln(os.Stderr, C.GoString(C.Tcl_GetStringResult(ir.C)))
+	err := ir.eval(args...)
+	if err != nil {
+		return err
 	}
-	return float64(f)
+
+	return ir.tcl_obj_to_go_value(C.Tcl_GetObjResult(ir.C), v)
 }
 
-func (ir *interpreter) mainLoop() {
-	C.Tk_MainLoop()
+func go_value_to_tcl_obj(value interface{}) *C.Tcl_Obj {
+	v := reflect.ValueOf(value)
+	switch v.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return C.Tcl_NewWideIntObj(C.Tcl_WideInt(v.Int()))
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return C.Tcl_NewWideIntObj(C.Tcl_WideInt(v.Uint()))
+	case reflect.Float32, reflect.Float64:
+		return C.Tcl_NewDoubleObj(C.double(v.Float()))
+	case reflect.Bool:
+		if v.Bool() {
+			return C.Tcl_NewBooleanObj(1)
+		}
+		return C.Tcl_NewBooleanObj(0)
+	case reflect.String:
+		s := v.String()
+		sh := *(*reflect.StringHeader)(unsafe.Pointer(&s))
+		return C.Tcl_NewStringObj((*C.char)(unsafe.Pointer(sh.Data)), C.int(len(s)))
+	}
+	return nil
 }
 
-func (ir *interpreter) uploadImage(name string, img image.Image) {
+func (ir *interpreter) set(name string, value interface{}) error {
+	obj := go_value_to_tcl_obj(value)
+	if obj == nil {
+		return errors.New("gothic: cannot convert Go value to TCL object")
+	}
+
+	cname := C.CString(name)
+	obj = C.Tcl_SetVar2Ex(ir.C, cname, nil, obj, C.TCL_LEAVE_ERR_MSG)
+	C.free(unsafe.Pointer(cname))
+	if obj == nil {
+		return errors.New(C.GoString(C.Tcl_GetStringResult(ir.C)))
+	}
+	return nil
+}
+
+func (ir *interpreter) upload_image(name string, img image.Image) error {
 	nrgba, ok := img.(*image.NRGBA)
 	if !ok {
 		// let's do it slowpoke
@@ -272,7 +267,7 @@ func (ir *interpreter) uploadImage(name string, img image.Image) {
 		ir.eval("image create photo ", name)
 		handle = C.Tk_FindPhoto(ir.C, cname)
 		if handle == nil {
-			panic("something terrible has happened")
+			return errors.New("failed to create an image handle")
 		}
 	}
 	C.free(unsafe.Pointer(cname))
@@ -285,36 +280,55 @@ func (ir *interpreter) uploadImage(name string, img image.Image) {
 		[...]C.int{0, 1, 2, 3},
 	}
 
-	C.Tk_PhotoPutBlock_NoComposite(handle, &block, 0, 0,
-		C.int(nrgba.Rect.Max.X), C.int(nrgba.Rect.Max.Y))
-
+	status := C.Tk_PhotoPutBlock(ir.C, handle, &block, 0, 0,
+		C.int(nrgba.Rect.Max.X), C.int(nrgba.Rect.Max.Y),
+		C.TK_PHOTO_COMPOSITE_SET)
+	if status != C.TCL_OK {
+		return errors.New(C.GoString(C.Tcl_GetStringResult(ir.C)))
+	}
+	return nil
 }
 
-func (ir *interpreter) tclObjToGoValue(obj *C.Tcl_Obj, typ reflect.Type) (reflect.Value, C.int) {
+func (ir *interpreter) tcl_obj_to_go_value(obj *C.Tcl_Obj, v reflect.Value) error {
 	var status C.int
-	v := reflect.New(typ).Elem()
 
-	switch typ.Kind() {
-	case reflect.Int:
+	switch v.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 		var out C.Tcl_WideInt
 		status = C.Tcl_GetWideIntFromObj(ir.C, obj, &out)
 		if status == C.TCL_OK {
 			v.SetInt(int64(out))
 		}
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		var out C.Tcl_WideInt
+		status = C.Tcl_GetWideIntFromObj(ir.C, obj, &out)
+		if status == C.TCL_OK {
+			v.SetUint(uint64(out))
+		}
 	case reflect.String:
-		v.SetString(C.GoString(C.Tcl_GetString(obj)))
+		var n C.int
+		out := C.Tcl_GetStringFromObj(obj, &n)
+		v.SetString(C.GoStringN(out, n))
 	case reflect.Float32, reflect.Float64:
 		var out C.double
 		status = C.Tcl_GetDoubleFromObj(ir.C, obj, &out)
 		if status == C.TCL_OK {
 			v.SetFloat(float64(out))
 		}
+	case reflect.Bool:
+		var out C.int
+		status = C.Tcl_GetBooleanFromObj(ir.C, obj, &out)
+		if status == C.TCL_OK {
+			v.SetBool(out == 1)
+		}
 	default:
-		msg := C.CString(fmt.Sprintf("Cannot convert Tcl object to Go type: %s", typ))
-		C._gotk_c_tcl_set_result(ir.C, msg)
-		status = C.TCL_ERROR
+		return fmt.Errorf("gothic: cannot convert TCL object to Go type: %s", v.Type())
 	}
-	return v, status
+
+	if status != C.TCL_OK {
+		return errors.New(C.GoString(C.Tcl_GetStringResult(ir.C)))
+	}
+	return nil
 }
 
 //------------------------------------------------------------------------------
@@ -323,10 +337,16 @@ func (ir *interpreter) tclObjToGoValue(obj *C.Tcl_Obj, typ reflect.Type) (reflec
 
 //export _gotk_go_command_handler
 func _gotk_go_command_handler(clidataup unsafe.Pointer, objc int, objv unsafe.Pointer) int {
+	// TODO: There is an idea of optimizing everything by a large margin,
+	// we can preprocess the type of a command in RegisterCommand function
+	// and then avoid calling reflect.New for every argument passed to that
+	// function. And we can even do additional error checks for unsupported
+	// argument types and handle multiple return values case.
+
 	clidata := (*C.GoTkClientData)(clidataup)
 	ir := (*interpreter)(clidata.go_interp)
 	args := (*(*[alot]*C.Tcl_Obj)(objv))[1:objc]
-	cb := _CInterfaceToGoInterface(clidata.iface)
+	cb := c_interface_to_go_interface(clidata.iface)
 	f := reflect.ValueOf(cb)
 	ft := f.Type()
 
@@ -340,14 +360,17 @@ func _gotk_go_command_handler(clidataup unsafe.Pointer, objc int, objv unsafe.Po
 			continue
 		}
 
-		v, status := ir.tclObjToGoValue(args[i], in)
-		if status != C.TCL_OK {
+		v := reflect.New(in).Elem()
+		err := ir.tcl_obj_to_go_value(args[i], v)
+		if err != nil {
+			C._gotk_c_tcl_set_result(ir.C, C.CString(err.Error()))
 			return C.TCL_ERROR
 		}
 
 		ir.valuesbuf = append(ir.valuesbuf, v)
 	}
 
+	// TODO: handle return value
 	f.Call(ir.valuesbuf)
 
 	return C.TCL_OK
@@ -357,48 +380,64 @@ func _gotk_go_command_handler(clidataup unsafe.Pointer, objc int, objv unsafe.Po
 func _gotk_go_command_deleter(data unsafe.Pointer) {
 	clidata := (*C.GoTkClientData)(data)
 	ir := (*interpreter)(clidata.go_interp)
-	delete(ir.commands, _CGoStringToGoString(clidata.strp, clidata.strn))
+	delete(ir.commands, cgo_string_to_go_string(clidata.strp, clidata.strn))
 }
 
-func (ir *interpreter) registerCommand(name string, cbfunc interface{}) {
+func (ir *interpreter) register_command(name string, cbfunc interface{}) error {
 	typ := reflect.TypeOf(cbfunc)
 	if typ.Kind() != reflect.Func {
-		panic("RegisterCommand only accepts functions as a second argument")
+		return errors.New("gothic: RegisterCommand only accepts func type as a second argument")
+	}
+	if _, ok := ir.commands[name]; ok {
+		return errors.New("gothic: command with the same name was already registered")
 	}
 	ir.commands[name] = cbfunc
-	cp, cn := _GoStringToCGoString(name)
+	cp, cn := go_string_to_cgo_string(name)
 	cname := C.CString(name)
 	C._gotk_c_add_command(ir.C, cname, unsafe.Pointer(ir), cp, cn,
-		_GoInterfacetoCInterface(cbfunc))
+		go_interface_to_c_interface(cbfunc))
 	C.free(unsafe.Pointer(cname))
+	return nil
 }
 
-func (ir *interpreter) unregisterCommand(name string) {
+func (ir *interpreter) unregister_command(name string) error {
 	if _, ok := ir.commands[name]; !ok {
-		return
+		return errors.New("gothic: trying to unregister a non-existent command")
 	}
 	cname := C.CString(name)
 	status := C.Tcl_DeleteCommand(ir.C, cname)
 	C.free(unsafe.Pointer(cname))
 	if status != C.TCL_OK {
-		panic(C.GoString(C.Tcl_GetStringResult(ir.C)))
+		return errors.New(C.GoString(C.Tcl_GetStringResult(ir.C)))
 	}
+	return nil
 }
 
 //------------------------------------------------------------------------------
 // interpreter.async
 //------------------------------------------------------------------------------
 
-type asyncAction struct {
-	action func()
+type async_action struct {
+	result *error
+	action func() error
 	cond   *sync.Cond
 }
 
-func (ir *interpreter) async(action func(), cond *sync.Cond) {
-	ir.queue <- asyncAction{action, cond}
+func (ir *interpreter) run_and_wait(action func() error) (err error) {
+	cond := sync.NewCond(&sync.Mutex{})
+	cond.L.Lock()
+
+	// send event
+	ir.queue <- async_action{result: &err, action: action, cond: cond}
 	ev := C._gotk_c_new_async_event(unsafe.Pointer(ir))
 	C.Tcl_ThreadQueueEvent(ir.thread, ev, C.TCL_QUEUE_TAIL)
 	C.Tcl_ThreadAlert(ir.thread)
+
+	// wait for result
+	cond.Wait()
+	cond.L.Unlock()
+
+	return
 }
 
 //export _gotk_go_async_handler
@@ -406,13 +445,13 @@ func _gotk_go_async_handler(ev unsafe.Pointer, flags int) int {
 	event := (*C.GoTkAsyncEvent)(ev)
 	ir := (*interpreter)(event.go_interp)
 	action := <-ir.queue
-	if action.action != nil {
+	if action.result == nil {
 		action.action()
+	} else {
+		*action.result = action.action()
 	}
-	if action.cond != nil {
-		action.cond.L.Lock()
-		action.cond.Signal()
-		action.cond.L.Unlock()
-	}
+	action.cond.L.Lock()
+	action.cond.Signal()
+	action.cond.L.Unlock()
 	return 1
 }

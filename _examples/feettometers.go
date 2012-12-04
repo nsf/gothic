@@ -23,7 +23,8 @@ bind . <Return> {calculate}
 	`)
 
 	ir.RegisterCommand("calculate", func() {
-		f := ir.EvalAsFloat("set feet")
+		var f float64
+		ir.EvalAs(&f, "set feet")
 		ir.Eval("set meters ", strconv.FormatFloat(f * 0.3048, 'f', 3, 64))
 	})
 
