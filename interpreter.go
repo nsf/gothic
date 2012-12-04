@@ -73,7 +73,10 @@ func NewInterpreter(init interface{}) *Interpreter {
 
 		switch realinit := init.(type) {
 		case string:
-			ir.ir.eval(realinit)
+			err = ir.ir.eval(realinit)
+			if err != nil {
+				panic(err)
+			}
 		case func(*Interpreter):
 			realinit(ir)
 		}
