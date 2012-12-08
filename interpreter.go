@@ -123,6 +123,18 @@ func NewInterpreter(init interface{}) *Interpreter {
 // 5. gothic.Sprintf("%{%q}", "[command $variable]")
 //    `"\[command \$variable\]"`
 func (ir *Interpreter) Eval(format string, args ...interface{}) error {
+	// interpreter thread
+	if C.Tcl_GetCurrentThread() == ir.ir.thread {
+		ir.ir.cmdbuf.Reset()
+		err := sprintf(&ir.ir.cmdbuf, format, args...)
+		if err != nil {
+			return ir.ir.filt(err)
+		}
+		err = ir.ir.eval(ir.ir.cmdbuf.Bytes())
+		return ir.ir.filt(err)
+	}
+
+	// foreign thread
 	buf := buffer_pool.get()
 	err := sprintf(&buf, format, args...)
 	if err != nil {
@@ -130,15 +142,6 @@ func (ir *Interpreter) Eval(format string, args ...interface{}) error {
 		return ir.ir.filt(err)
 	}
 	script := buf.Bytes()
-
-	if C.Tcl_GetCurrentThread() == ir.ir.thread {
-		// interpreter thread
-		err = ir.ir.eval(script)
-		buffer_pool.put(buf)
-		return ir.ir.filt(err)
-	}
-
-	// foreign thread
 	err = ir.ir.run_and_wait(func() error {
 		return ir.ir.filt(ir.ir.eval(script))
 	})
@@ -147,6 +150,18 @@ func (ir *Interpreter) Eval(format string, args ...interface{}) error {
 }
 
 func (ir *Interpreter) EvalAs(out interface{}, format string, args ...interface{}) error {
+	// interpreter thread
+	if C.Tcl_GetCurrentThread() == ir.ir.thread {
+		ir.ir.cmdbuf.Reset()
+		err := sprintf(&ir.ir.cmdbuf, format, args...)
+		if err != nil {
+			return ir.ir.filt(err)
+		}
+		err = ir.ir.eval_as(out, ir.ir.cmdbuf.Bytes())
+		return ir.ir.filt(err)
+	}
+
+	// foreign thread
 	buf := buffer_pool.get()
 	err := sprintf(&buf, format, args...)
 	if err != nil {
@@ -154,15 +169,6 @@ func (ir *Interpreter) EvalAs(out interface{}, format string, args ...interface{
 		return ir.ir.filt(err)
 	}
 	script := buf.Bytes()
-
-	// interpreter thread
-	if C.Tcl_GetCurrentThread() == ir.ir.thread {
-		err = ir.ir.eval_as(out, script)
-		buffer_pool.put(buf)
-		return ir.ir.filt(err)
-	}
-
-	// foreign thread
 	err = ir.ir.run_and_wait(func() error {
 		return ir.ir.filt(ir.ir.eval_as(out, script))
 	})
@@ -236,6 +242,7 @@ type interpreter struct {
 
 	thread C.Tcl_ThreadId
 	queue  chan async_action
+	cmdbuf bytes.Buffer
 }
 
 func new_interpreter() (*interpreter, error) {
