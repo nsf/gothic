@@ -20,7 +20,7 @@ func BenchmarkTcl(b *testing.B) {
 
 	ir.Set("N", b.N)
 	ir.Eval(`
-		for {set i 1} {$i < $N} {incr i} {
+		for {set i 0} {$i < $N} {incr i} {
 			set x 10
 		}
 	`)
