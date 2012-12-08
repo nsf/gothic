@@ -11,8 +11,8 @@ import (
 	"errors"
 	"reflect"
 	"runtime"
-	"unsafe"
 	"bytes"
+	"unsafe"
 	"image"
 	"sync"
 	"fmt"
@@ -73,7 +73,7 @@ func NewInterpreter(init interface{}) *Interpreter {
 
 		switch realinit := init.(type) {
 		case string:
-			err = ir.ir.eval(realinit)
+			err = ir.ir.eval([]byte(realinit))
 			if err != nil {
 				panic(err)
 			}
@@ -90,22 +90,84 @@ func NewInterpreter(init interface{}) *Interpreter {
 	return ir
 }
 
-func (ir *Interpreter) Eval(args ...interface{}) error {
-	if C.Tcl_GetCurrentThread() == ir.ir.thread {
-		return ir.ir.filt(ir.ir.eval(args...))
+// Queue script for evaluation and wait for its completion. This function uses printf-like
+// formatting style. However it provides a tiny wrapper on top of printf for the purpose of
+// being friendly with TCL's syntax. Also it provides several advanced features like named
+// and positional arguments.
+//
+// The syntax for formatting tags is %{<abbrev>[<format>]}, where:
+//  - <abbrev> could be a number of the function argument (starting from 0) or
+//    a name of the key in the provided gothic.ArgMap argument. It can also be
+//    empty, in this case it uses internal counter, takes the corresponding
+//    argument and increments that counter.
+//  - <format> is the fmt.Sprintf format specifier, passed directly to
+//    fmt.Sprintf as is.
+//
+// NOTES:
+// 1. Formatter is extended to do TCL-specific quoting on %q with a string argument.
+// 2. Named abbrev is allowed when there is only one argument and the type of this
+//    argument is gothic.ArgMap.
+//
+// Examples:
+// 1. gothic.Sprintf("%{0} = %{1} + %{1}", 10, 5)
+//    "10 = 5 + 5"
+// 2. gothic.Sprintf("%{} = %{%d} + %{1}", 20, 10)
+//    "20 = 10 + 10"
+// 3. gothic.Sprintf("%{0%.2f} and %{%.2f}", 3.1415)
+//    "3.14 and 3.14"
+// 4. gothic.Sprintf("[myfunction %{arg1} %{arg2}]", gothic.ArgMap{
+//            "arg1": 5,
+//            "arg2": 10,
+//    })
+//    "[myfunction 5 10]"
+// 5. gothic.Sprintf("%{%q}", "[command $variable]")
+//    `"\[command \$variable\]"`
+func (ir *Interpreter) Eval(format string, args ...interface{}) error {
+	buf := buffer_pool.get()
+	err := sprintf(&buf, format, args...)
+	if err != nil {
+		buffer_pool.put(buf)
+		return ir.ir.filt(err)
 	}
-	return ir.ir.run_and_wait(func() error {
-		return ir.ir.filt(ir.ir.eval(args...))
+	script := buf.Bytes()
+
+	if C.Tcl_GetCurrentThread() == ir.ir.thread {
+		// interpreter thread
+		err = ir.ir.eval(script)
+		buffer_pool.put(buf)
+		return ir.ir.filt(err)
+	}
+
+	// foreign thread
+	err = ir.ir.run_and_wait(func() error {
+		return ir.ir.filt(ir.ir.eval(script))
 	})
+	buffer_pool.put(buf)
+	return err
 }
 
-func (ir *Interpreter) EvalAs(out interface{}, args ...interface{}) error {
-	if C.Tcl_GetCurrentThread() == ir.ir.thread {
-		return ir.ir.filt(ir.ir.eval_as(out, args...))
+func (ir *Interpreter) EvalAs(out interface{}, format string, args ...interface{}) error {
+	buf := buffer_pool.get()
+	err := sprintf(&buf, format, args...)
+	if err != nil {
+		buffer_pool.put(buf)
+		return ir.ir.filt(err)
 	}
-	return ir.ir.run_and_wait(func() error {
-		return ir.ir.filt(ir.ir.eval_as(out, args...))
+	script := buf.Bytes()
+
+	// interpreter thread
+	if C.Tcl_GetCurrentThread() == ir.ir.thread {
+		err = ir.ir.eval_as(out, script)
+		buffer_pool.put(buf)
+		return ir.ir.filt(err)
+	}
+
+	// foreign thread
+	err = ir.ir.run_and_wait(func() error {
+		return ir.ir.filt(ir.ir.eval_as(out, script))
 	})
+	buffer_pool.put(buf)
+	return err
 }
 
 func (ir *Interpreter) Set(name string, val interface{}) error {
@@ -174,7 +236,6 @@ type interpreter struct {
 
 	thread C.Tcl_ThreadId
 	queue  chan async_action
-	cmdbuf bytes.Buffer
 }
 
 func new_interpreter() (*interpreter, error) {
@@ -211,26 +272,23 @@ func (ir *interpreter) filt(err error) error {
 	return err
 }
 
-func (ir *interpreter) eval(args ...interface{}) error {
-	ir.cmdbuf.Reset()
-	fmt.Fprint(&ir.cmdbuf, args...)
-	ir.cmdbuf.WriteByte(0)
-
-	status := C.Tcl_Eval(ir.C, (*C.char)(unsafe.Pointer(&ir.cmdbuf.Bytes()[0])))
+func (ir *interpreter) eval(script []byte) error {
+	status := C.Tcl_EvalEx(ir.C, (*C.char)(unsafe.Pointer(&script[0])),
+		C.int(len(script)), 0)
 	if status != C.TCL_OK {
 		return errors.New(C.GoString(C.Tcl_GetStringResult(ir.C)))
 	}
 	return nil
 }
 
-func (ir *interpreter) eval_as(out interface{}, args ...interface{}) error {
+func (ir *interpreter) eval_as(out interface{}, script []byte) error {
 	pv := reflect.ValueOf(out)
 	if pv.Kind() != reflect.Ptr || pv.IsNil() {
 		panic("gothic: EvalAs expected a non-nil pointer argument")
 	}
 	v := pv.Elem()
 
-	err := ir.eval(args...)
+	err := ir.eval(script)
 	if err != nil {
 		return err
 	}
@@ -276,6 +334,12 @@ func (ir *interpreter) set(name string, value interface{}) error {
 }
 
 func (ir *interpreter) upload_image(name string, img image.Image) error {
+	var buf bytes.Buffer
+	err := sprintf(&buf, "image create photo %{}", name)
+	if err != nil {
+		return err
+	}
+
 	nrgba, ok := img.(*image.NRGBA)
 	if !ok {
 		// let's do it slowpoke
@@ -291,7 +355,10 @@ func (ir *interpreter) upload_image(name string, img image.Image) error {
 	cname := C.CString(name)
 	handle := C.Tk_FindPhoto(ir.C, cname)
 	if handle == nil {
-		ir.eval("image create photo ", name)
+		err := ir.eval(buf.Bytes())
+		if err != nil {
+			return err
+		}
 		handle = C.Tk_FindPhoto(ir.C, cname)
 		if handle == nil {
 			return errors.New("failed to create an image handle")

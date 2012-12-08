@@ -41,7 +41,7 @@ func applyOp(op string, ir *gothic.Interpreter) {
 	lastOp = op
 	args[1] = nil
 
-	ir.Eval("set calcText ", args[0])
+	ir.Eval("set calcText %{}", args[0])
 	if op == "=" {
 		args[0] = nil
 	}
@@ -125,7 +125,7 @@ bind . <BackSpace>   { clearAll }
 			afterOp = false
 			ir.Eval("set calcText {}")
 		}
-		ir.Eval("append calcText ", n)
+		ir.Eval("append calcText %{}", n)
 	})
 
 	ir.RegisterCommand("applyOp", func(op string) {
@@ -133,7 +133,7 @@ bind . <BackSpace>   { clearAll }
 			return
 		}
 		applyOp(op, ir)
-		ir.Eval("set lastOp ", lastOp)
+		ir.Eval("set lastOp %{}", lastOp)
 	})
 
 	ir.RegisterCommand("clearAll", func() {
@@ -152,9 +152,9 @@ bind . <BackSpace>   { clearAll }
 		}
 
 		if text[0] == '-' {
-			ir.Eval("set calcText ", text[1:])
+			ir.Eval("set calcText %{}", text[1:])
 		} else {
-			ir.Eval("set calcText ", "-" + text)
+			ir.Eval("set calcText -%{}", text)
 		}
 	})
 

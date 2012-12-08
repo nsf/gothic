@@ -5,10 +5,10 @@ import "fmt"
 
 func main() {
 	ir := tk.NewInterpreter(`
-namespace eval go {}
-ttk::entry .e -textvariable go::etext
-trace add variable go::etext write go::onchange
-pack .e -fill x -expand true
+		namespace eval go {}
+		ttk::entry .e -textvariable go::etext
+		trace add variable go::etext write go::onchange
+		pack .e -fill x -expand true
 	`)
 
 	ir.RegisterCommand("go::onchange", func() {

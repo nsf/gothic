@@ -18,10 +18,10 @@ func dispatcher(c <-chan string) {
 
 func main() {
 	ir := gothic.NewInterpreter(`
-ttk::button .b1 -text "Button 1" -command {dispatcher <- button1}
-ttk::button .b2 -text "Button 2" -command {dispatcher <- button2}
-ttk::button .b3 -text "Button 3" -command {dispatcher <- button3}
-pack .b1 .b2 .b3
+		ttk::button .b1 -text "Button 1" -command {dispatcher <- button1}
+		ttk::button .b2 -text "Button 2" -command {dispatcher <- button2}
+		ttk::button .b3 -text "Button 3" -command {dispatcher <- button3}
+		pack .b1 .b2 .b3
 	`)
 
 	c := make(chan string)
