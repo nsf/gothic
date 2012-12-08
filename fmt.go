@@ -22,11 +22,26 @@ func split_tag(tag string) (abbrev, format string) {
 	return
 }
 
+func write_arg_quoted(buf *bytes.Buffer, arg interface{}) {
+	switch a := arg.(type) {
+	case string:
+		quote(buf, a)
+	case error:
+		quote(buf, a.Error())
+	case fmt.Stringer:
+		quote(buf, a.String())
+	default:
+		// TODO: it doesn't work in all cases, we still need to escape
+		// various $ { } [ ] symbols
+		fmt.Fprintf(buf, "%q", arg)
+	}
+}
+
 func write_arg(buf *bytes.Buffer, arg interface{}, format string) {
 	if format != "" {
-		if s, ok := arg.(string); ok && format == "%q" {
-			// special case, quote string in a TCL specific way
-			quote(buf, s)
+		if format == "%q" {
+			write_arg_quoted(buf, arg)
+			return
 		} else {
 			fmt.Fprintf(buf, format, arg)
 		}

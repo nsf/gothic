@@ -104,7 +104,7 @@ func NewInterpreter(init interface{}) *Interpreter {
 //    fmt.Sprintf as is.
 //
 // NOTES:
-// 1. Formatter is extended to do TCL-specific quoting on %q with a string argument.
+// 1. Formatter is extended to do TCL-specific quoting on %q format specifier.
 // 2. Named abbrev is allowed when there is only one argument and the type of this
 //    argument is gothic.ArgMap.
 //
