@@ -85,7 +85,7 @@ grid .4 .5  .6     .minus -sticky nwes
 grid .1 .2  .3     .plus  -sticky nwes
 grid .0 .pm .clear .eq    -sticky nwes
 
-grid configure .f -sticky wes
+grid configure .f -sticky we
 
 foreach w [winfo children .] {grid configure $w -padx 3 -pady 3}
 
