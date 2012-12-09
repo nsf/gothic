@@ -52,40 +52,46 @@ func main() {
 set lastOp {}
 set calcText 0
 wm title . "GoCalculator"
-grid [ttk::frame .f] -column 0 -row 0 -columnspan 3 -sticky we
-grid [ttk::entry .f.lastop -textvariable lastOp -justify center -state readonly -width 3] -column 0 -row 0 -sticky we
-grid [ttk::entry .f.entry -textvariable calcText -justify right -state readonly] -column 1 -row 0 -sticky we
+
+ttk::frame .f
+ttk::entry .f.lastop -textvariable lastOp -justify center -state readonly -width 3
+ttk::entry .f.entry -textvariable calcText -justify right -state readonly
+
+grid .f.lastop .f.entry -sticky we
 grid columnconfigure .f 0 -weight 0
 grid columnconfigure .f 1 -weight 1
-grid [ttk::button .0 -text 0 -command { appendNum 0 }] -column 0 -row 4 -sticky nwes
-grid [ttk::button .1 -text 1 -command { appendNum 1 }] -column 0 -row 3 -sticky nwes
-grid [ttk::button .2 -text 2 -command { appendNum 2 }] -column 1 -row 3 -sticky nwes
-grid [ttk::button .3 -text 3 -command { appendNum 3 }] -column 2 -row 3 -sticky nwes
-grid [ttk::button .4 -text 4 -command { appendNum 4 }] -column 0 -row 2 -sticky nwes
-grid [ttk::button .5 -text 5 -command { appendNum 5 }] -column 1 -row 2 -sticky nwes
-grid [ttk::button .6 -text 6 -command { appendNum 6 }] -column 2 -row 2 -sticky nwes
-grid [ttk::button .7 -text 7 -command { appendNum 7 }] -column 0 -row 1 -sticky nwes
-grid [ttk::button .8 -text 8 -command { appendNum 8 }] -column 1 -row 1 -sticky nwes
-grid [ttk::button .9 -text 9 -command { appendNum 9 }] -column 2 -row 1 -sticky nwes
-grid [ttk::button .pm    -text +/- -command plusMinus]   -column 1 -row 4 -sticky nwes
-grid [ttk::button .clear -text C -command clearAll]      -column 2 -row 4 -sticky nwes
-grid [ttk::button .eq    -text = -command { applyOp = }] -column 3 -row 4 -sticky nwes
-grid [ttk::button .plus  -text + -command { applyOp + }] -column 3 -row 3 -sticky nwes
-grid [ttk::button .minus -text - -command { applyOp - }] -column 3 -row 2 -sticky nwes
-grid [ttk::button .mul   -text * -command { applyOp * }] -column 3 -row 1 -sticky nwes
-grid [ttk::button .div   -text / -command { applyOp / }] -column 3 -row 0 -sticky nwes
+
+ttk::button .0 -text 0 -command { appendNum 0 }
+ttk::button .1 -text 1 -command { appendNum 1 }
+ttk::button .2 -text 2 -command { appendNum 2 }
+ttk::button .3 -text 3 -command { appendNum 3 }
+ttk::button .4 -text 4 -command { appendNum 4 }
+ttk::button .5 -text 5 -command { appendNum 5 }
+ttk::button .6 -text 6 -command { appendNum 6 }
+ttk::button .7 -text 7 -command { appendNum 7 }
+ttk::button .8 -text 8 -command { appendNum 8 }
+ttk::button .9 -text 9 -command { appendNum 9 }
+ttk::button .pm    -text +/- -command plusMinus
+ttk::button .clear -text C -command clearAll
+ttk::button .eq    -text = -command { applyOp = }
+ttk::button .plus  -text + -command { applyOp + }
+ttk::button .minus -text - -command { applyOp - }
+ttk::button .mul   -text * -command { applyOp * }
+ttk::button .div   -text / -command { applyOp / }
+
+grid .f -   -      .div   -sticky nwes
+grid .7 .8  .9     .mul   -sticky nwes
+grid .4 .5  .6     .minus -sticky nwes
+grid .1 .2  .3     .plus  -sticky nwes
+grid .0 .pm .clear .eq    -sticky nwes
+
+grid configure .f -sticky wes
 
 foreach w [winfo children .] {grid configure $w -padx 3 -pady 3}
 
 grid rowconfigure . 0 -weight 0
-grid rowconfigure . 1 -weight 1
-grid rowconfigure . 2 -weight 1
-grid rowconfigure . 3 -weight 1
-grid rowconfigure . 4 -weight 1
-grid columnconfigure . 0 -weight 1
-grid columnconfigure . 1 -weight 1
-grid columnconfigure . 2 -weight 1
-grid columnconfigure . 3 -weight 1
+foreach i {1 2 3 4} { grid rowconfigure . $i -weight 1 }
+foreach i {0 1 2 3} { grid columnconfigure . $i -weight 1 }
 
 bind . 0             { appendNum 0 }
 bind . <KP_Insert>   { appendNum 0 }
