@@ -26,6 +26,8 @@ func (*Interpreter) Set(name string, val interface{}) error
 func (*Interpreter) UploadImage(name string, img image.Image) error
 func (*Interpreter) RegisterCommand(name string, cbfunc interface{}) error
 func (*Interpreter) UnregisterCommand(name string) error
+func (*Interpreter) RegisterCommands(name string, val interface{}) error
+func (*Interpreter) UnregisterCommands(name string) error
 
 As it was stated before, the "Interpreter" is being executed in a separate
 goroutine and each method is completely thread-safe. Also every method is

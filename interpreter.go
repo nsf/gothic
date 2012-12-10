@@ -11,6 +11,7 @@ import (
 	"errors"
 	"reflect"
 	"runtime"
+	"strings"
 	"bytes"
 	"unsafe"
 	"image"
@@ -213,12 +214,30 @@ func (ir *Interpreter) RegisterCommand(name string, cbfunc interface{}) error {
 	})
 }
 
+func (ir *Interpreter) RegisterCommands(name string, val interface{}) error {
+	if C.Tcl_GetCurrentThread() == ir.ir.thread {
+		return ir.ir.filt(ir.ir.register_commands(name, val))
+	}
+	return ir.ir.run_and_wait(func() error {
+		return ir.ir.filt(ir.ir.register_commands(name, val))
+	})
+}
+
 func (ir *Interpreter) UnregisterCommand(name string) error {
 	if C.Tcl_GetCurrentThread() == ir.ir.thread {
 		return ir.ir.filt(ir.ir.unregister_command(name))
 	}
 	return ir.ir.run_and_wait(func() error {
 		return ir.ir.filt(ir.ir.unregister_command(name))
+	})
+}
+
+func (ir *Interpreter) UnregisterCommands(name string) error {
+	if C.Tcl_GetCurrentThread() == ir.ir.thread {
+		return ir.ir.filt(ir.ir.unregister_commands(name))
+	}
+	return ir.ir.run_and_wait(func() error {
+		return ir.ir.filt(ir.ir.unregister_commands(name))
 	})
 }
 
@@ -234,8 +253,8 @@ type interpreter struct {
 	// registered commands
 	commands map[string]interface{}
 
-	// registered channels
-	channels map[string]interface{}
+	// registered method sets
+	methods map[string]interface{}
 
 	// just a buffer to avoid allocs in _gotk_go_command_handler
 	valuesbuf []reflect.Value
@@ -250,7 +269,7 @@ func new_interpreter() (*interpreter, error) {
 		C:         C.Tcl_CreateInterp(),
 		errfilt:   func(err error) error { return err },
 		commands:  make(map[string]interface{}),
-		channels:  make(map[string]interface{}),
+		methods:   make(map[string]interface{}),
 		valuesbuf: make([]reflect.Value, 0, 10),
 		queue:     make(chan async_action, 50),
 		thread:    C.Tcl_GetCurrentThread(),
@@ -477,6 +496,50 @@ func _gotk_go_command_handler(clidataup unsafe.Pointer, objc int, objv unsafe.Po
 	return C.TCL_OK
 }
 
+//export _gotk_go_method_handler
+func _gotk_go_method_handler(clidataup unsafe.Pointer, objc int, objv unsafe.Pointer) int {
+	// TODO: There is an idea of optimizing everything by a large margin,
+	// we can preprocess the type of a command in RegisterCommand function
+	// and then avoid calling reflect.New for every argument passed to that
+	// function. And we can even do additional error checks for unsupported
+	// argument types and handle multiple return values case.
+
+	clidata := (*C.GoTkClientData)(clidataup)
+	ir := (*interpreter)(clidata.go_interp)
+	args := (*(*[alot]*C.Tcl_Obj)(objv))[1:objc]
+	cb := c_interface_to_go_interface(clidata.iface)
+	recv := c_interface_to_go_interface(clidata.iface2)
+	f := reflect.ValueOf(cb)
+	ft := f.Type()
+
+	ir.valuesbuf = ir.valuesbuf[:0]
+	ir.valuesbuf = append(ir.valuesbuf, reflect.ValueOf(recv))
+	for i, n := 1, ft.NumIn(); i < n; i++ {
+		ia := i - 1
+		in := ft.In(i)
+
+		// use default value, if there is not enough args
+		if len(args) <= ia {
+			ir.valuesbuf = append(ir.valuesbuf, reflect.New(in).Elem())
+			continue
+		}
+
+		v := reflect.New(in).Elem()
+		err := ir.tcl_obj_to_go_value(args[ia], v)
+		if err != nil {
+			C._gotk_c_tcl_set_result(ir.C, C.CString(err.Error()))
+			return C.TCL_ERROR
+		}
+
+		ir.valuesbuf = append(ir.valuesbuf, v)
+	}
+
+	// TODO: handle return value
+	f.Call(ir.valuesbuf)
+
+	return C.TCL_OK
+}
+
 //export _gotk_go_command_deleter
 func _gotk_go_command_deleter(data unsafe.Pointer) {
 	clidata := (*C.GoTkClientData)(data)
@@ -501,6 +564,32 @@ func (ir *interpreter) register_command(name string, cbfunc interface{}) error {
 	return nil
 }
 
+func (ir *interpreter) register_commands(name string, val interface{}) error {
+	if _, ok := ir.methods[name]; ok {
+		return errors.New("gothic: method set with the same name was already registered")
+	}
+	ir.methods[name] = val
+	t := reflect.TypeOf(val)
+	for i, n := 0, t.NumMethod(); i < n; i++ {
+		m := t.Method(i)
+		if !strings.HasPrefix(m.Name, "TCL") {
+			continue
+		}
+
+		subname := m.Name[3:]
+		if strings.HasPrefix(m.Name, "TCL_") {
+			subname = m.Name[4:]
+		}
+
+		cname := C.CString(name + "::" + subname)
+		C._gotk_c_add_method(ir.C, cname, unsafe.Pointer(ir),
+			go_interface_to_c_interface(m.Func.Interface()),
+			go_interface_to_c_interface(val))
+		C.free(unsafe.Pointer(cname))
+	}
+	return nil
+}
+
 func (ir *interpreter) unregister_command(name string) error {
 	if _, ok := ir.commands[name]; !ok {
 		return errors.New("gothic: trying to unregister a non-existent command")
@@ -510,6 +599,33 @@ func (ir *interpreter) unregister_command(name string) error {
 	C.free(unsafe.Pointer(cname))
 	if status != C.TCL_OK {
 		return errors.New(C.GoString(C.Tcl_GetStringResult(ir.C)))
+	}
+	return nil
+}
+
+func (ir *interpreter) unregister_commands(name string) error {
+	if _, ok := ir.methods[name]; !ok {
+		return errors.New("gothic: trying to unregister a non-existent method set")
+	}
+	val := ir.methods[name]
+	t := reflect.TypeOf(val)
+	for i, n := 0, t.NumMethod(); i < n; i++ {
+		m := t.Method(i)
+		if !strings.HasPrefix(m.Name, "TCL") {
+			continue
+		}
+
+		subname := m.Name[3:]
+		if strings.HasPrefix(m.Name, "TCL_") {
+			subname = m.Name[4:]
+		}
+
+		cname := C.CString(name + "::" + subname)
+		status := C.Tcl_DeleteCommand(ir.C, cname)
+		C.free(unsafe.Pointer(cname))
+		if status != C.TCL_OK {
+			return errors.New(C.GoString(C.Tcl_GetStringResult(ir.C)))
+		}
 	}
 	return nil
 }

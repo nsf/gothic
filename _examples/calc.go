@@ -3,47 +3,86 @@ package main
 import "github.com/nsf/gothic"
 import "math/big"
 
-var args [2]*big.Int
-var lastOp string
-var afterOp = true
+type calc struct {
+	*gothic.Interpreter
+	args [2]*big.Int
+	lastOp string
+	afterOp bool
+}
 
-func applyOp(op string, ir *gothic.Interpreter) {
-	var num string
-	ir.EvalAs(&num, "set calcText")
-	if args[0] == nil {
-		if op != "=" {
-			args[0] = big.NewInt(0)
-			args[0].SetString(num, 10)
-		}
-	} else {
-		args[1] = big.NewInt(0)
-		args[1].SetString(num, 10)
-	}
-
-	afterOp = true
-
-	if args[1] == nil {
-		lastOp = op
+func (c *calc) TCL_ApplyOp(op string) {
+	if c.afterOp && c.lastOp != "=" {
 		return
 	}
 
-	switch lastOp {
-	case "+":
-		args[0] = args[0].Add(args[0], args[1])
-	case "-":
-		args[0] = args[0].Sub(args[0], args[1])
-	case "/":
-		args[0] = args[0].Div(args[0], args[1])
-	case "*":
-		args[0] = args[0].Mul(args[0], args[1])
+	var num string
+	c.EvalAs(&num, "set calcText")
+	if c.args[0] == nil {
+		if op != "=" {
+			c.args[0] = big.NewInt(0)
+			c.args[0].SetString(num, 10)
+		}
+	} else {
+		c.args[1] = big.NewInt(0)
+		c.args[1].SetString(num, 10)
 	}
 
-	lastOp = op
-	args[1] = nil
+	c.afterOp = true
 
-	ir.Eval("set calcText %{}", args[0])
+	if c.args[1] == nil {
+		c.lastOp = op
+		c.Eval("set lastOp %{}", c.lastOp)
+		return
+	}
+
+	switch c.lastOp {
+	case "+":
+		c.args[0] = c.args[0].Add(c.args[0], c.args[1])
+	case "-":
+		c.args[0] = c.args[0].Sub(c.args[0], c.args[1])
+	case "/":
+		c.args[0] = c.args[0].Div(c.args[0], c.args[1])
+	case "*":
+		c.args[0] = c.args[0].Mul(c.args[0], c.args[1])
+	}
+
+	c.lastOp = op
+	c.args[1] = nil
+
+	c.Eval("set lastOp %{}", c.lastOp)
+	c.Eval("set calcText %{}", c.args[0])
 	if op == "=" {
-		args[0] = nil
+		c.args[0] = nil
+	}
+}
+
+func (c *calc) TCL_AppendNum(n string) {
+	if c.afterOp {
+		c.afterOp = false
+		c.Eval("set calcText {}")
+	}
+	c.Eval("append calcText %{}", n)
+}
+
+func (c *calc) TCL_ClearAll() {
+	c.args[0] = nil
+	c.args[1] = nil
+	c.afterOp = true
+	c.lastOp = ""
+	c.Eval("set lastOp {}; set calcText 0")
+}
+
+func (c *calc) TCL_PlusMinus() {
+	var text string
+	c.EvalAs(&text, "set calcText")
+	if len(text) == 0 || text[0] == '0' {
+		return
+	}
+
+	if text[0] == '-' {
+		c.Eval("set calcText %{}", text[1:])
+	} else {
+		c.Eval("set calcText -%{}", text)
 	}
 }
 
@@ -58,26 +97,25 @@ ttk::entry .f.lastop -textvariable lastOp -justify center -state readonly -width
 ttk::entry .f.entry -textvariable calcText -justify right -state readonly
 
 grid .f.lastop .f.entry -sticky we
-grid columnconfigure .f 0 -weight 0
 grid columnconfigure .f 1 -weight 1
 
-ttk::button .0 -text 0 -command { appendNum 0 }
-ttk::button .1 -text 1 -command { appendNum 1 }
-ttk::button .2 -text 2 -command { appendNum 2 }
-ttk::button .3 -text 3 -command { appendNum 3 }
-ttk::button .4 -text 4 -command { appendNum 4 }
-ttk::button .5 -text 5 -command { appendNum 5 }
-ttk::button .6 -text 6 -command { appendNum 6 }
-ttk::button .7 -text 7 -command { appendNum 7 }
-ttk::button .8 -text 8 -command { appendNum 8 }
-ttk::button .9 -text 9 -command { appendNum 9 }
-ttk::button .pm    -text +/- -command plusMinus
-ttk::button .clear -text C -command clearAll
-ttk::button .eq    -text = -command { applyOp = }
-ttk::button .plus  -text + -command { applyOp + }
-ttk::button .minus -text - -command { applyOp - }
-ttk::button .mul   -text * -command { applyOp * }
-ttk::button .div   -text / -command { applyOp / }
+ttk::button .0 -text 0 -command { go::AppendNum 0 }
+ttk::button .1 -text 1 -command { go::AppendNum 1 }
+ttk::button .2 -text 2 -command { go::AppendNum 2 }
+ttk::button .3 -text 3 -command { go::AppendNum 3 }
+ttk::button .4 -text 4 -command { go::AppendNum 4 }
+ttk::button .5 -text 5 -command { go::AppendNum 5 }
+ttk::button .6 -text 6 -command { go::AppendNum 6 }
+ttk::button .7 -text 7 -command { go::AppendNum 7 }
+ttk::button .8 -text 8 -command { go::AppendNum 8 }
+ttk::button .9 -text 9 -command { go::AppendNum 9 }
+ttk::button .pm    -text +/- -command go::PlusMinus
+ttk::button .clear -text C -command go::ClearAll
+ttk::button .eq    -text = -command { go::ApplyOp = }
+ttk::button .plus  -text + -command { go::ApplyOp + }
+ttk::button .minus -text - -command { go::ApplyOp - }
+ttk::button .mul   -text * -command { go::ApplyOp * }
+ttk::button .div   -text / -command { go::ApplyOp / }
 
 grid .f -   -      .div   -sticky nwes
 grid .7 .8  .9     .mul   -sticky nwes
@@ -89,81 +127,44 @@ grid configure .f -sticky we
 
 foreach w [winfo children .] {grid configure $w -padx 3 -pady 3}
 
-grid rowconfigure . 0 -weight 0
 foreach i {1 2 3 4} { grid rowconfigure . $i -weight 1 }
 foreach i {0 1 2 3} { grid columnconfigure . $i -weight 1 }
 
-bind . 0             { appendNum 0 }
-bind . <KP_Insert>   { appendNum 0 }
-bind . 1             { appendNum 1 }
-bind . <KP_End>      { appendNum 1 }
-bind . 2             { appendNum 2 }
-bind . <KP_Down>     { appendNum 2 }
-bind . 3             { appendNum 3 }
-bind . <KP_Next>     { appendNum 3 }
-bind . 4             { appendNum 4 }
-bind . <KP_Left>     { appendNum 4 }
-bind . 5             { appendNum 5 }
-bind . <KP_Begin>    { appendNum 5 }
-bind . 6             { appendNum 6 }
-bind . <KP_Right>    { appendNum 6 }
-bind . 7             { appendNum 7 }
-bind . <KP_Home>     { appendNum 7 }
-bind . 8             { appendNum 8 }
-bind . <KP_Up>       { appendNum 8 }
-bind . 9             { appendNum 9 }
-bind . <KP_Prior>    { appendNum 9 }
-bind . +             { applyOp + }
-bind . <KP_Add>      { applyOp + }
-bind . -             { applyOp - }
-bind . <KP_Subtract> { applyOp - }
-bind . *             { applyOp * }
-bind . <KP_Multiply> { applyOp * }
-bind . /             { applyOp / }
-bind . <KP_Divide>   { applyOp / }
-bind . <Return>      { applyOp = }
-bind . <KP_Enter>    { applyOp = }
-bind . <BackSpace>   { clearAll }
+bind . 0             { go::AppendNum 0 }
+bind . <KP_Insert>   { go::AppendNum 0 }
+bind . 1             { go::AppendNum 1 }
+bind . <KP_End>      { go::AppendNum 1 }
+bind . 2             { go::AppendNum 2 }
+bind . <KP_Down>     { go::AppendNum 2 }
+bind . 3             { go::AppendNum 3 }
+bind . <KP_Next>     { go::AppendNum 3 }
+bind . 4             { go::AppendNum 4 }
+bind . <KP_Left>     { go::AppendNum 4 }
+bind . 5             { go::AppendNum 5 }
+bind . <KP_Begin>    { go::AppendNum 5 }
+bind . 6             { go::AppendNum 6 }
+bind . <KP_Right>    { go::AppendNum 6 }
+bind . 7             { go::AppendNum 7 }
+bind . <KP_Home>     { go::AppendNum 7 }
+bind . 8             { go::AppendNum 8 }
+bind . <KP_Up>       { go::AppendNum 8 }
+bind . 9             { go::AppendNum 9 }
+bind . <KP_Prior>    { go::AppendNum 9 }
+bind . +             { go::ApplyOp + }
+bind . <KP_Add>      { go::ApplyOp + }
+bind . -             { go::ApplyOp - }
+bind . <KP_Subtract> { go::ApplyOp - }
+bind . *             { go::ApplyOp * }
+bind . <KP_Multiply> { go::ApplyOp * }
+bind . /             { go::ApplyOp / }
+bind . <KP_Divide>   { go::ApplyOp / }
+bind . <Return>      { go::ApplyOp = }
+bind . <KP_Enter>    { go::ApplyOp = }
+bind . <BackSpace>   { go::ClearAll }
 	`)
-
-	ir.RegisterCommand("appendNum", func(n string) {
-		if afterOp {
-			afterOp = false
-			ir.Eval("set calcText {}")
-		}
-		ir.Eval("append calcText %{}", n)
+	ir.RegisterCommands("go", &calc{
+		Interpreter: ir,
+		afterOp: true,
 	})
-
-	ir.RegisterCommand("applyOp", func(op string) {
-		if afterOp && lastOp != "=" {
-			return
-		}
-		applyOp(op, ir)
-		ir.Eval("set lastOp %{}", lastOp)
-	})
-
-	ir.RegisterCommand("clearAll", func() {
-		args[0] = nil
-		args[1] = nil
-		afterOp = true
-		lastOp = ""
-		ir.Eval("set lastOp {}; set calcText 0")
-	})
-
-	ir.RegisterCommand("plusMinus", func() {
-		var text string
-		ir.EvalAs(&text, "set calcText")
-		if len(text) == 0 || text[0] == '0' {
-			return
-		}
-
-		if text[0] == '-' {
-			ir.Eval("set calcText %{}", text[1:])
-		} else {
-			ir.Eval("set calcText -%{}", text)
-		}
-	})
-
-
 	<-ir.Done
 }
