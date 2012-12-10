@@ -627,6 +627,7 @@ func (ir *interpreter) unregister_commands(name string) error {
 			return errors.New(C.GoString(C.Tcl_GetStringResult(ir.C)))
 		}
 	}
+	delete(ir.methods, name)
 	return nil
 }
 
