@@ -49,14 +49,19 @@ func go_interface_to_c_interface(iface interface{}) *unsafe.Pointer {
 }
 
 // A handle that is used to manipulate a TCL interpreter. All handle methods
-// can be safely invoked from different threads. Each method invokation is
+// can be safely invoked from different threads. Each method invocation is
 // synchronous, it means that the method will be blocked until the action is
 // actually executed.
+//
+// `Done` field returns 0 when Tk's main loop exits.
 type Interpreter struct {
 	ir   *interpreter
 	Done <-chan int
 }
 
+// Creates a new instance of the *gothic.Interpreter. But before interpreter
+// enters the Tk's main loop it will execute `init`. Init argument could be a
+// string or a function with this signature: "func(*gothic.Interpreter)".
 func NewInterpreter(init interface{}) *Interpreter {
 	initdone := make(chan int)
 	done := make(chan int)
@@ -91,38 +96,44 @@ func NewInterpreter(init interface{}) *Interpreter {
 	return ir
 }
 
-// Queue script for evaluation and wait for its completion. This function uses printf-like
-// formatting style. However it provides a tiny wrapper on top of printf for the purpose of
-// being friendly with TCL's syntax. Also it provides several advanced features like named
-// and positional arguments.
+// Queue script for evaluation and wait for its completion. This function uses
+// printf-like formatting style. However it provides a tiny wrapper on top of
+// printf for the purpose of being friendly with TCL's syntax. Also it provides
+// several advanced features like named and positional arguments.
 //
-// The syntax for formatting tags is %{<abbrev>[<format>]}, where:
-//  - <abbrev> could be a number of the function argument (starting from 0) or
-//    a name of the key in the provided gothic.ArgMap argument. It can also be
-//    empty, in this case it uses internal counter, takes the corresponding
-//    argument and increments that counter.
-//  - <format> is the fmt.Sprintf format specifier, passed directly to
-//    fmt.Sprintf as is.
+// The syntax for formatting tags is:
+//  %{<abbrev>[<format>]}
 //
-// NOTES:
-// 1. Formatter is extended to do TCL-specific quoting on %q format specifier.
-// 2. Named abbrev is allowed when there is only one argument and the type of this
-//    argument is gothic.ArgMap.
+// Where:
+//
+//  <abbrev> could be a number of the function argument (starting from 0) or a
+//           name of the key in the provided gothic.ArgMap argument. It can
+//           also be empty, in this case it uses internal counter, takes the
+//           corresponding argument and increments that counter.
+//
+//  <format> Is the fmt.Sprintf format specifier, passed directly to
+//           fmt.Sprintf as is.
+//
+// Additional notes:
+//
+//  1. Formatter is extended to do TCL-specific quoting on %q format specifier.
+//  2. Named abbrev is only allowed when there is one argument and the type of
+//     this argument is gothic.ArgMap.
 //
 // Examples:
-// 1. gothic.Sprintf("%{0} = %{1} + %{1}", 10, 5)
-//    "10 = 5 + 5"
-// 2. gothic.Sprintf("%{} = %{%d} + %{1}", 20, 10)
-//    "20 = 10 + 10"
-// 3. gothic.Sprintf("%{0%.2f} and %{%.2f}", 3.1415)
-//    "3.14 and 3.14"
-// 4. gothic.Sprintf("[myfunction %{arg1} %{arg2}]", gothic.ArgMap{
-//            "arg1": 5,
-//            "arg2": 10,
-//    })
-//    "[myfunction 5 10]"
-// 5. gothic.Sprintf("%{%q}", "[command $variable]")
-//    `"\[command \$variable\]"`
+//  1. gothic.Eval("%{0} = %{1} + %{1}", 10, 5)
+//     "10 = 5 + 5"
+//  2. gothic.Eval("%{} = %{%d} + %{1}", 20, 10)
+//     "20 = 10 + 10"
+//  3. gothic.Eval("%{0%.2f} and %{%.2f}", 3.1415)
+//     "3.14 and 3.14"
+//  4. gothic.Eval("[myfunction %{arg1} %{arg2}]", gothic.ArgMap{
+//             "arg1": 5,
+//             "arg2": 10,
+//     })
+//     "[myfunction 5 10]"
+//  5. gothic.Eval("%{%q}", "[command $variable]")
+//     `"\[command \$variable\]"`
 func (ir *Interpreter) Eval(format string, args ...interface{}) error {
 	// interpreter thread
 	if C.Tcl_GetCurrentThread() == ir.ir.thread {
@@ -150,6 +161,8 @@ func (ir *Interpreter) Eval(format string, args ...interface{}) error {
 	return err
 }
 
+// Works exactly as Eval with exception that it writes the result of executed
+// code into `out`.
 func (ir *Interpreter) EvalAs(out interface{}, format string, args ...interface{}) error {
 	// interpreter thread
 	if C.Tcl_GetCurrentThread() == ir.ir.thread {
@@ -177,6 +190,9 @@ func (ir *Interpreter) EvalAs(out interface{}, format string, args ...interface{
 	return err
 }
 
+// Sets the TCL variable `name` to the `val`. Sometimes it's nice to be able to
+// avoid going through TCL's syntax. Especially for things like passing a whole
+// buffer of text to TCL.
 func (ir *Interpreter) Set(name string, val interface{}) error {
 	if C.Tcl_GetCurrentThread() == ir.ir.thread {
 		return ir.ir.filt(ir.ir.set(name, val))
@@ -186,6 +202,8 @@ func (ir *Interpreter) Set(name string, val interface{}) error {
 	})
 }
 
+// Every TCL error goes through the filter passed to this function. If you pass
+// nil, then no error filter is set.
 func (ir *Interpreter) ErrorFilter(filt func(error)error) {
 	if C.Tcl_GetCurrentThread() == ir.ir.thread {
 		ir.ir.errfilt = filt
@@ -205,6 +223,7 @@ func (ir *Interpreter) UploadImage(name string, img image.Image) error {
 	})
 }
 
+// Register a new TCL command called `name`.
 func (ir *Interpreter) RegisterCommand(name string, cbfunc interface{}) error {
 	if C.Tcl_GetCurrentThread() == ir.ir.thread {
 		return ir.ir.filt(ir.ir.register_command(name, cbfunc))
@@ -214,6 +233,10 @@ func (ir *Interpreter) RegisterCommand(name string, cbfunc interface{}) error {
 	})
 }
 
+// Register multiple TCL command within the `name` namespace. The method uses
+// runtime reflection and registers only those methods of the `val` which have
+// one of the following prefixes: "TCL" or "TCL_". The name of the resulting
+// command doesn't include the prefix.
 func (ir *Interpreter) RegisterCommands(name string, val interface{}) error {
 	if C.Tcl_GetCurrentThread() == ir.ir.thread {
 		return ir.ir.filt(ir.ir.register_commands(name, val))
@@ -223,6 +246,7 @@ func (ir *Interpreter) RegisterCommands(name string, val interface{}) error {
 	})
 }
 
+// Unregisters (deletes) previously registered command `name`.
 func (ir *Interpreter) UnregisterCommand(name string) error {
 	if C.Tcl_GetCurrentThread() == ir.ir.thread {
 		return ir.ir.filt(ir.ir.unregister_command(name))
@@ -232,6 +256,8 @@ func (ir *Interpreter) UnregisterCommand(name string) error {
 	})
 }
 
+// Unregisters (deletes) previously registered command set within the `name`
+// namespace.
 func (ir *Interpreter) UnregisterCommands(name string) error {
 	if C.Tcl_GetCurrentThread() == ir.ir.thread {
 		return ir.ir.filt(ir.ir.unregister_commands(name))
