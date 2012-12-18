@@ -161,6 +161,17 @@ func (ir *Interpreter) Eval(format string, args ...interface{}) error {
 	return err
 }
 
+// Works the same way as Eval("%{}", byte_slice), but avoids unnecessary
+// buffering.
+func (ir *Interpreter) EvalBytes(s []byte) error {
+	if C.Tcl_GetCurrentThread() == ir.ir.thread {
+		return ir.ir.filt(ir.ir.eval(s))
+	}
+	return ir.ir.run_and_wait(func() error {
+		return ir.ir.filt(ir.ir.eval(s))
+	})
+}
+
 // Works exactly as Eval with exception that it writes the result of executed
 // code into `out`.
 func (ir *Interpreter) EvalAs(out interface{}, format string, args ...interface{}) error {
