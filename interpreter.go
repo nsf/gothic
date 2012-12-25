@@ -336,6 +336,9 @@ func (ir *interpreter) filt(err error) error {
 }
 
 func (ir *interpreter) eval(script []byte) error {
+	if len(script) == 0 {
+		return nil
+	}
 	status := C.Tcl_EvalEx(ir.C, (*C.char)(unsafe.Pointer(&script[0])),
 		C.int(len(script)), 0)
 	if status != C.TCL_OK {
@@ -493,7 +496,7 @@ func (ir *interpreter) tcl_obj_to_go_value(obj *C.Tcl_Obj, v reflect.Value) erro
 //------------------------------------------------------------------------------
 
 //export _gotk_go_command_handler
-func _gotk_go_command_handler(clidataup unsafe.Pointer, objc int, objv unsafe.Pointer) int {
+func _gotk_go_command_handler(clidataup unsafe.Pointer, objc C.int, objv unsafe.Pointer) C.int {
 	// TODO: There is an idea of optimizing everything by a large margin,
 	// we can preprocess the type of a command in RegisterCommand function
 	// and then avoid calling reflect.New for every argument passed to that
@@ -534,7 +537,7 @@ func _gotk_go_command_handler(clidataup unsafe.Pointer, objc int, objv unsafe.Po
 }
 
 //export _gotk_go_method_handler
-func _gotk_go_method_handler(clidataup unsafe.Pointer, objc int, objv unsafe.Pointer) int {
+func _gotk_go_method_handler(clidataup unsafe.Pointer, objc C.int, objv unsafe.Pointer) C.int {
 	// TODO: There is an idea of optimizing everything by a large margin,
 	// we can preprocess the type of a command in RegisterCommand function
 	// and then avoid calling reflect.New for every argument passed to that
@@ -696,7 +699,7 @@ func (ir *interpreter) run_and_wait(action func() error) (err error) {
 }
 
 //export _gotk_go_async_handler
-func _gotk_go_async_handler(ev unsafe.Pointer, flags int) int {
+func _gotk_go_async_handler(ev unsafe.Pointer, flags C.int) C.int {
 	if flags != C.TK_ALL_EVENTS {
 		return 0
 	}
