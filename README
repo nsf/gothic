@@ -1,5 +1,12 @@
 Tcl/Tk Go bindings.
 
+VERSION NOTICE
+
+Recently Tcl/Tk 8.6 were released. I use them as a default, if you still have
+Tcl/Tk 8.5 use `go get -tags tcl85 github.com/nsf/gothic`.
+
+DESCRIPTION
+
 In its current state the bindings are a bit Tk-oriented. You can't create an
 interpreter instance without Tk. In future it's likely it will be changed.
 
