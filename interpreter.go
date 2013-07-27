@@ -210,6 +210,34 @@ func (ir *Interpreter) EvalAs(out interface{}, format string, args ...interface{
 	return err
 }
 
+// Shortcut for `var i int; err := EvalAs(&i, format, args...)`
+func (ir *Interpreter) EvalAsInt(format string, args ...interface{}) (int, error) {
+	var as int
+	err := ir.EvalAs(&as, format, args...)
+	return as, err
+}
+
+// Shortcut for `var s string; err := EvalAs(&s, format, args...)`
+func (ir *Interpreter) EvalAsString(format string, args ...interface{}) (string, error) {
+	var as string
+	err := ir.EvalAs(&as, format, args...)
+	return as, err
+}
+
+// Shortcut for `var f float64; err := EvalAs(&f, format, args...)`
+func (ir *Interpreter) EvalAsFloat(format string, args ...interface{}) (float64, error) {
+	var as float64
+	err := ir.EvalAs(&as, format, args...)
+	return as, err
+}
+
+// Shortcut for `var b bool; err := EvalAs(&b, format, args...)`
+func (ir *Interpreter) EvalAsBool(format string, args ...interface{}) (bool, error) {
+	var as bool
+	err := ir.EvalAs(&as, format, args...)
+	return as, err
+}
+
 // Sets the TCL variable `name` to the `val`. Sometimes it's nice to be able to
 // avoid going through TCL's syntax. Especially for things like passing a whole
 // buffer of text to TCL.
