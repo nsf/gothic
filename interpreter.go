@@ -99,12 +99,19 @@ func NewInterpreter(init interface{}) *Interpreter {
 }
 
 // Queue script for evaluation and wait for its completion. This function uses
-// printf-like formatting style. However it provides a tiny wrapper on top of
-// printf for the purpose of being friendly with TCL's syntax. Also it provides
-// several advanced features like named and positional arguments.
+// printf-like formatting style, except that all the formatting tags are
+// enclosed within %{}. The reason for this is because tcl/tk uses %-based
+// formatting tags for its own purposes. Also it provides several extensions
+// like named and positional arguments. When no arguments are provided it will
+// evaluate the format string as-is.
+//
+// Another important difference between fmt.Sprintf and Eval is that when using
+// Eval, invalid format/arguments combination results in an error, while
+// fmt.Sprintf simply ignores misconfiguration. All the formatter generated
+// errors go through ErrorFilter, just like any other tcl error.
 //
 // The syntax for formatting tags is:
-//  %{<abbrev>[<format>]}
+//  %{[<abbrev>[<format>]]}
 //
 // Where:
 //
@@ -114,7 +121,7 @@ func NewInterpreter(init interface{}) *Interpreter {
 //           corresponding argument and increments that counter.
 //
 //  <format> Is the fmt.Sprintf format specifier, passed directly to
-//           fmt.Sprintf as is.
+//           fmt.Sprintf as is (except for %q, see additional notes).
 //
 // Additional notes:
 //
