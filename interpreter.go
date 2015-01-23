@@ -647,7 +647,6 @@ func _gotk_go_method_handler(clidataup unsafe.Pointer, objc C.int, objv unsafe.P
 func _gotk_go_command_deleter(data unsafe.Pointer) {
 	clidata := (*C.GoTkClientData)(data)
 	ir := global_handles.get(int(clidata.go_interp)).(*interpreter)
-	delete(ir.commands, ir.handles[clidata.h0].Value.(string))
 	ir.handles.free_handle(int(clidata.h0))
 }
 
@@ -704,6 +703,7 @@ func (ir *interpreter) unregister_command(name string) error {
 	if status != C.TCL_OK {
 		return errors.New(C.GoString(C.Tcl_GetStringResult(ir.C)))
 	}
+	delete(ir.commands, name)
 	return nil
 }
 
