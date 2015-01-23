@@ -11,15 +11,15 @@ package gothic
 */
 import "C"
 import (
+	"bytes"
 	"errors"
+	"fmt"
+	"image"
 	"reflect"
 	"runtime"
 	"strings"
-	"bytes"
-	"unsafe"
-	"image"
 	"sync"
-	"fmt"
+	"unsafe"
 )
 
 const (
@@ -30,26 +30,6 @@ const (
 //------------------------------------------------------------------------------
 // Utils
 //------------------------------------------------------------------------------
-
-func cgo_string_to_go_string(p *C.char, n C.int) string {
-	var x reflect.StringHeader
-	x.Data = uintptr(unsafe.Pointer(p))
-	x.Len = int(n)
-	return *(*string)(unsafe.Pointer(&x))
-}
-
-func go_string_to_cgo_string(s string) (*C.char, C.int) {
-	x := *(*reflect.StringHeader)(unsafe.Pointer(&s))
-	return (*C.char)(unsafe.Pointer(x.Data)), C.int(x.Len)
-}
-
-func c_interface_to_go_interface(iface [2]unsafe.Pointer) interface{} {
-	return *(*interface{})(unsafe.Pointer(&iface))
-}
-
-func go_interface_to_c_interface(iface interface{}) *unsafe.Pointer {
-	return (*unsafe.Pointer)(unsafe.Pointer(&iface))
-}
 
 // A handle that is used to manipulate a TCL interpreter. All handle methods
 // can be safely invoked from different threads. Each method invocation is
@@ -253,7 +233,7 @@ func (ir *Interpreter) Set(name string, val interface{}) error {
 
 // Every TCL error goes through the filter passed to this function. If you pass
 // nil, then no error filter is set.
-func (ir *Interpreter) ErrorFilter(filt func(error)error) {
+func (ir *Interpreter) ErrorFilter(filt func(error) error) {
 	if C.Tcl_GetCurrentThread() == ir.ir.thread {
 		ir.ir.errfilt = filt
 	}
@@ -320,16 +300,54 @@ func (ir *Interpreter) UnregisterCommands(name string) error {
 // interpreter
 //------------------------------------------------------------------------------
 
+type global_handles_t struct {
+	sync.Mutex
+	handles handles
+}
+
+func (g *global_handles_t) get_handle_for_value(value interface{}) int {
+	g.Lock()
+	out := g.handles.get_handle_for_value(value)
+	g.Unlock()
+	return out
+}
+
+func (g *global_handles_t) free_handle(id int) {
+	g.Lock()
+	g.free_handle(id)
+	g.Unlock()
+}
+
+func (g *global_handles_t) get(id int) interface{} {
+	g.Lock()
+	out := g.handles[id].Value
+	g.Unlock()
+	return out
+}
+
+var global_handles global_handles_t
+
+//------------------------------------------------------------------------------
+// interpreter
+//------------------------------------------------------------------------------
+
 type interpreter struct {
 	C *C.Tcl_Interp
 
 	errfilt func(error) error
 
+	// id of this interpreter in global_handles table
+	id int
+
+	// buffer for C -> Go handles, every Go object passed to C is stored here
+	handles handles
+
 	// registered commands
 	commands map[string]interface{}
 
 	// registered method sets
-	methods map[string]interface{}
+	methods        map[string]interface{}
+	method_handles map[string][]int
 
 	// just a buffer to avoid allocs in _gotk_go_command_handler
 	valuesbuf []reflect.Value
@@ -339,15 +357,20 @@ type interpreter struct {
 	cmdbuf bytes.Buffer
 }
 
+func release_interpreter(ir *interpreter) {
+	global_handles.free_handle(ir.id)
+}
+
 func new_interpreter() (*interpreter, error) {
 	ir := &interpreter{
-		C:         C.Tcl_CreateInterp(),
-		errfilt:   func(err error) error { return err },
-		commands:  make(map[string]interface{}),
-		methods:   make(map[string]interface{}),
-		valuesbuf: make([]reflect.Value, 0, 10),
-		queue:     make(chan async_action, 50),
-		thread:    C.Tcl_GetCurrentThread(),
+		C:              C.Tcl_CreateInterp(),
+		errfilt:        func(err error) error { return err },
+		commands:       make(map[string]interface{}),
+		methods:        make(map[string]interface{}),
+		method_handles: make(map[string][]int),
+		valuesbuf:      make([]reflect.Value, 0, 10),
+		queue:          make(chan async_action, 50),
+		thread:         C.Tcl_GetCurrentThread(),
 	}
 
 	status := C.Tcl_Init(ir.C)
@@ -360,6 +383,8 @@ func new_interpreter() (*interpreter, error) {
 		return nil, errors.New(C.GoString(C.Tcl_GetStringResult(ir.C)))
 	}
 
+	ir.id = global_handles.get_handle_for_value(ir)
+	runtime.SetFinalizer(ir, release_interpreter)
 	return ir, nil
 }
 
@@ -542,9 +567,9 @@ func _gotk_go_command_handler(clidataup unsafe.Pointer, objc C.int, objv unsafe.
 	// argument types and handle multiple return values case.
 
 	clidata := (*C.GoTkClientData)(clidataup)
-	ir := (*interpreter)(clidata.go_interp)
+	ir := global_handles.get(int(clidata.go_interp)).(*interpreter)
 	args := (*(*[alot]*C.Tcl_Obj)(objv))[1:objc]
-	cb := c_interface_to_go_interface(clidata.iface)
+	cb := ir.handles[clidata.h0].Value
 	f := reflect.ValueOf(cb)
 	ft := f.Type()
 
@@ -583,11 +608,11 @@ func _gotk_go_method_handler(clidataup unsafe.Pointer, objc C.int, objv unsafe.P
 	// argument types and handle multiple return values case.
 
 	clidata := (*C.GoTkClientData)(clidataup)
-	ir := (*interpreter)(clidata.go_interp)
+	ir := global_handles.get(int(clidata.go_interp)).(*interpreter)
 	args := (*(*[alot]*C.Tcl_Obj)(objv))[1:objc]
-	cb := c_interface_to_go_interface(clidata.iface)
-	recv := c_interface_to_go_interface(clidata.iface2)
-	f := reflect.ValueOf(cb)
+	recv := ir.handles[clidata.h0].Value
+	meth := ir.handles[clidata.h1].Value
+	f := reflect.ValueOf(meth)
 	ft := f.Type()
 
 	ir.valuesbuf = ir.valuesbuf[:0]
@@ -621,8 +646,9 @@ func _gotk_go_method_handler(clidataup unsafe.Pointer, objc C.int, objv unsafe.P
 //export _gotk_go_command_deleter
 func _gotk_go_command_deleter(data unsafe.Pointer) {
 	clidata := (*C.GoTkClientData)(data)
-	ir := (*interpreter)(clidata.go_interp)
-	delete(ir.commands, cgo_string_to_go_string(clidata.strp, clidata.strn))
+	ir := global_handles.get(int(clidata.go_interp)).(*interpreter)
+	delete(ir.commands, ir.handles[clidata.h0].Value.(string))
+	ir.handles.free_handle(int(clidata.h0))
 }
 
 func (ir *interpreter) register_command(name string, cbfunc interface{}) error {
@@ -634,10 +660,8 @@ func (ir *interpreter) register_command(name string, cbfunc interface{}) error {
 		return errors.New("gothic: command with the same name was already registered")
 	}
 	ir.commands[name] = cbfunc
-	cp, cn := go_string_to_cgo_string(name)
 	cname := C.CString(name)
-	C._gotk_c_add_command(ir.C, cname, unsafe.Pointer(ir), cp, cn,
-		go_interface_to_c_interface(cbfunc))
+	C._gotk_c_add_command(ir.C, cname, C.int(ir.id), C.int(ir.handles.get_handle_for_value(cbfunc)))
 	C.free(unsafe.Pointer(cname))
 	return nil
 }
@@ -648,6 +672,8 @@ func (ir *interpreter) register_commands(name string, val interface{}) error {
 	}
 	ir.methods[name] = val
 	t := reflect.TypeOf(val)
+	valh := ir.handles.get_handle_for_value(val)
+	ir.method_handles[name] = append(ir.method_handles[name], valh)
 	for i, n := 0, t.NumMethod(); i < n; i++ {
 		m := t.Method(i)
 		if !strings.HasPrefix(m.Name, "TCL") {
@@ -660,9 +686,9 @@ func (ir *interpreter) register_commands(name string, val interface{}) error {
 		}
 
 		cname := C.CString(name + "::" + subname)
-		C._gotk_c_add_method(ir.C, cname, unsafe.Pointer(ir),
-			go_interface_to_c_interface(m.Func.Interface()),
-			go_interface_to_c_interface(val))
+		mh := ir.handles.get_handle_for_value(m.Func.Interface())
+		ir.method_handles[name] = append(ir.method_handles[name], mh)
+		C._gotk_c_add_method(ir.C, cname, C.int(ir.id), C.int(valh), C.int(mh))
 		C.free(unsafe.Pointer(cname))
 	}
 	return nil
@@ -706,6 +732,10 @@ func (ir *interpreter) unregister_commands(name string) error {
 		}
 	}
 	delete(ir.methods, name)
+	for _, id := range ir.method_handles[name] {
+		ir.handles.free_handle(id)
+	}
+	delete(ir.method_handles, name)
 	return nil
 }
 
@@ -725,7 +755,7 @@ func (ir *interpreter) run_and_wait(action func() error) (err error) {
 
 	// send event
 	ir.queue <- async_action{result: &err, action: action, cond: cond}
-	ev := C._gotk_c_new_async_event(unsafe.Pointer(ir))
+	ev := C._gotk_c_new_async_event(C.int(ir.id))
 	C.Tcl_ThreadQueueEvent(ir.thread, ev, C.TCL_QUEUE_TAIL)
 	C.Tcl_ThreadAlert(ir.thread)
 
@@ -742,7 +772,7 @@ func _gotk_go_async_handler(ev unsafe.Pointer, flags C.int) C.int {
 		return 0
 	}
 	event := (*C.GoTkAsyncEvent)(ev)
-	ir := (*interpreter)(event.go_interp)
+	ir := global_handles.get(int(event.go_interp)).(*interpreter)
 	action := <-ir.queue
 	if action.result == nil {
 		action.action()

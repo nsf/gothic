@@ -1,8 +1,8 @@
 package gothic
 
 import (
-	"sync"
 	"bytes"
+	"sync"
 )
 
 type buffer_pool_type struct {

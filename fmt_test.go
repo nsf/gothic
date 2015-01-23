@@ -1,9 +1,9 @@
 package gothic
 
 import (
-	"testing"
 	"bytes"
 	"regexp"
+	"testing"
 )
 
 func test_format(t *testing.T, gold, format string, args ...interface{}) {
