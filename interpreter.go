@@ -454,8 +454,9 @@ func (ir *interpreter) set(name string, value interface{}) error {
 	}
 
 	cname := C.CString(name)
+	defer C.free(unsafe.Pointer(cname))
+
 	obj = C.Tcl_SetVar2Ex(ir.C, cname, nil, obj, C.TCL_LEAVE_ERR_MSG)
-	C.free(unsafe.Pointer(cname))
 	if obj == nil {
 		return errors.New(C.GoString(C.Tcl_GetStringResult(ir.C)))
 	}
@@ -482,6 +483,8 @@ func (ir *interpreter) upload_image(name string, img image.Image) error {
 	}
 
 	cname := C.CString(name)
+	defer C.free(unsafe.Pointer(cname))
+
 	handle := C.Tk_FindPhoto(ir.C, cname)
 	if handle == nil {
 		err := ir.eval(buf.Bytes())
@@ -493,9 +496,12 @@ func (ir *interpreter) upload_image(name string, img image.Image) error {
 			return errors.New("failed to create an image handle")
 		}
 	}
-	C.free(unsafe.Pointer(cname))
+
+	imgdata := C.CBytes(nrgba.Pix)
+	defer C.free(imgdata)
+
 	block := C.Tk_PhotoImageBlock{
-		(*C.uchar)(unsafe.Pointer(&nrgba.Pix[0])),
+		(*C.uchar)(imgdata),
 		C.int(nrgba.Rect.Max.X),
 		C.int(nrgba.Rect.Max.Y),
 		C.int(nrgba.Stride),
@@ -660,8 +666,8 @@ func (ir *interpreter) register_command(name string, cbfunc interface{}) error {
 	}
 	ir.commands[name] = cbfunc
 	cname := C.CString(name)
+	defer C.free(unsafe.Pointer(cname))
 	C._gotk_c_add_command(ir.C, cname, C.int(ir.id), C.int(ir.handles.get_handle_for_value(cbfunc)))
-	C.free(unsafe.Pointer(cname))
 	return nil
 }
 
@@ -685,10 +691,11 @@ func (ir *interpreter) register_commands(name string, val interface{}) error {
 		}
 
 		cname := C.CString(name + "::" + subname)
+		defer C.free(unsafe.Pointer(cname))
+
 		mh := ir.handles.get_handle_for_value(m.Func.Interface())
 		ir.method_handles[name] = append(ir.method_handles[name], mh)
 		C._gotk_c_add_method(ir.C, cname, C.int(ir.id), C.int(valh), C.int(mh))
-		C.free(unsafe.Pointer(cname))
 	}
 	return nil
 }
@@ -697,9 +704,11 @@ func (ir *interpreter) unregister_command(name string) error {
 	if _, ok := ir.commands[name]; !ok {
 		return errors.New("gothic: trying to unregister a non-existent command")
 	}
+
 	cname := C.CString(name)
+	defer C.free(unsafe.Pointer(cname))
+
 	status := C.Tcl_DeleteCommand(ir.C, cname)
-	C.free(unsafe.Pointer(cname))
 	if status != C.TCL_OK {
 		return errors.New(C.GoString(C.Tcl_GetStringResult(ir.C)))
 	}
@@ -725,8 +734,9 @@ func (ir *interpreter) unregister_commands(name string) error {
 		}
 
 		cname := C.CString(name + "::" + subname)
+		defer C.free(unsafe.Pointer(cname))
+
 		status := C.Tcl_DeleteCommand(ir.C, cname)
-		C.free(unsafe.Pointer(cname))
 		if status != C.TCL_OK {
 			return errors.New(C.GoString(C.Tcl_GetStringResult(ir.C)))
 		}
