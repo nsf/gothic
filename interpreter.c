@@ -8,6 +8,10 @@ void _gotk_c_tcl_set_result(Tcl_Interp *interp, char *result) {
 	Tcl_SetResult(interp, result, free_string);
 }
 
+void _gotk_c_tcl_set_obj_result(Tcl_Interp *interp, Tcl_Obj *result) {
+    Tcl_SetObjResult(interp, result);
+}
+
 GoTkClientData *_gotk_c_client_data_new(int go_interp, int h0, int h1) {
 	GoTkClientData *cd = malloc(sizeof(GoTkClientData));
 	cd->go_interp = go_interp;
