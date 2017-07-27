@@ -31,6 +31,16 @@ const (
 // Utils
 //------------------------------------------------------------------------------
 
+// IsComplete returns true if s is a complete TCL command.
+func IsComplete(s string) bool {
+	cs := C.CString(s)
+	defer C.free(unsafe.Pointer(cs))
+	if C.Tcl_CommandComplete(cs) != 0 {
+		return true
+	}
+	return false
+}
+
 // A handle that is used to manipulate a TCL interpreter. All handle methods
 // can be safely invoked from different threads. Each method invocation is
 // synchronous, it means that the method will be blocked until the action is
