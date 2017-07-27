@@ -31,6 +31,16 @@ const (
 // Utils
 //------------------------------------------------------------------------------
 
+// IsComplete returns true if s is a complete TCL command.
+func IsComplete(s string) bool {
+	cs := C.CString(s)
+	defer C.free(unsafe.Pointer(cs))
+	if C.Tcl_CommandComplete(cs) != 0 {
+		return true
+	}
+	return false
+}
+
 // A handle that is used to manipulate a TCL interpreter. All handle methods
 // can be safely invoked from different threads. Each method invocation is
 // synchronous, it means that the method will be blocked until the action is
@@ -425,8 +435,7 @@ func (ir *interpreter) eval_as(out interface{}, script []byte) error {
 	return ir.tcl_obj_to_go_value(C.Tcl_GetObjResult(ir.C), v)
 }
 
-func go_value_to_tcl_obj(value interface{}) *C.Tcl_Obj {
-	v := reflect.ValueOf(value)
+func go_value_to_tcl_obj(v reflect.Value) *C.Tcl_Obj {
 	switch v.Kind() {
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 		return C.Tcl_NewWideIntObj(C.Tcl_WideInt(v.Int()))
@@ -441,14 +450,16 @@ func go_value_to_tcl_obj(value interface{}) *C.Tcl_Obj {
 		return C.Tcl_NewBooleanObj(0)
 	case reflect.String:
 		s := v.String()
-		sh := *(*reflect.StringHeader)(unsafe.Pointer(&s))
-		return C.Tcl_NewStringObj((*C.char)(unsafe.Pointer(sh.Data)), C.int(len(s)))
+		b := C.CBytes([]byte(s))
+		obj := C.Tcl_NewStringObj((*C.char)(b), C.int(len(s)))
+		C.free(b)
+		return obj
 	}
 	return nil
 }
 
 func (ir *interpreter) set(name string, value interface{}) error {
-	obj := go_value_to_tcl_obj(value)
+	obj := go_value_to_tcl_obj(reflect.ValueOf(value))
 	if obj == nil {
 		return errors.New("gothic: cannot convert Go value to TCL object")
 	}
@@ -583,6 +594,19 @@ func _gotk_go_command_handler(clidataup unsafe.Pointer, objc C.int, objv unsafe.
 	for i, n := 0, ft.NumIn(); i < n; i++ {
 		in := ft.In(i)
 
+		if ft.IsVariadic() && i == n-1 && in.Kind() == reflect.Slice {
+			for i := i; i < len(args); i++ {
+				v := reflect.New(in.Elem()).Elem()
+				err := ir.tcl_obj_to_go_value(args[i], v)
+				if err != nil {
+					C._gotk_c_tcl_set_result(ir.C, C.CString(err.Error()))
+					return C.TCL_ERROR
+				}
+				ir.valuesbuf = append(ir.valuesbuf, v)
+			}
+			break
+		}
+
 		// use default value, if there is not enough args
 		if len(args) <= i {
 			ir.valuesbuf = append(ir.valuesbuf, reflect.New(in).Elem())
@@ -599,8 +623,33 @@ func _gotk_go_command_handler(clidataup unsafe.Pointer, objc C.int, objv unsafe.
 		ir.valuesbuf = append(ir.valuesbuf, v)
 	}
 
-	// TODO: handle return value
-	f.Call(ir.valuesbuf)
+	// Cycle through results.  The first value result will be
+	// returned; if a non-nil error result is encountered, an
+	// error will be returned.  If more than one non-error result
+	// is encountered, that itself is an error.
+	var returnValue *C.Tcl_Obj
+	for _, result := range f.Call(ir.valuesbuf) {
+		if result.Type().Implements(reflect.TypeOf((*error)(nil)).Elem()) {
+			if result.IsNil() {
+				continue
+			}
+			e := result.MethodByName("Error")
+			s := e.Call(nil)
+			C._gotk_c_tcl_set_result(ir.C, C.CString(s[0].String()))
+			return C.TCL_ERROR
+		}
+		if returnValue != nil {
+			C._gotk_c_tcl_set_result(ir.C, C.CString("gothic: cannot return multiple results to TCL"))
+			return C.TCL_ERROR
+		}
+		if returnValue = go_value_to_tcl_obj(result); returnValue == nil {
+			C._gotk_c_tcl_set_result(ir.C, C.CString("gothic: cannot convert Go value to TCL object"))
+			return C.TCL_ERROR
+		}
+	}
+	if returnValue != nil {
+		C._gotk_c_tcl_set_obj_result(ir.C, returnValue)
+	}
 
 	return C.TCL_OK
 }
